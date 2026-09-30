@@ -196,9 +196,20 @@ class Engine:
     def _gate_or_deliver(self, igsid: str, contact: Any, camp: Dict[str, Any]) -> str:
         who = f"@{contact['username'] or igsid}"
         try:
-            follows = True
+            follows: Optional[bool] = True
             if camp.get("follow_gate", True):
-                follows = bool(self.g.profile(igsid).get("is_user_follow_business"))
+                try:
+                    follows = bool(self.g.profile(igsid).get("is_user_follow_business"))
+                    self.s.put("follow_check", "ok")
+                except GraphError as e:
+                    if e.code != 230:
+                        raise
+                    # They've replied, yet Instagram still won't show whether they follow (it seems to need Meta's
+                    # app review / webhooks). Fall back to trust: ask them to follow, then send on their tap.
+                    self.s.put("follow_check", "unavailable")
+                    follows = None
+            if follows is None:
+                follows = int(contact["prompts"] or 0) >= 1  # they've been asked once and answered: take their word
             if follows:
                 self._deliver(igsid, camp, who)
                 self.s.upsert_contact(igsid, stage="delivered", delivered_at=self.now())
@@ -255,8 +266,11 @@ class Engine:
                 continue
             try:
                 ids = self.g.message_ids(conv["id"])[:20]
-                # Fetch only messages not handled yet (one call each), oldest first.
-                msgs = [self.g.message(m["id"]) for m in reversed(ids) if not self.s.message_seen(m["id"])]
+                # Fetch only messages we could still act on (one call each), oldest first: not seen yet, and newer
+                # than both the start time and Instagram's 24-hour reply window. Their ids carry the time for free.
+                oldest = max(self.started_at(), self.now() - DAY)
+                fresh = [m for m in ids if not self.s.message_seen(m["id"]) and parse_time(m.get("created_time")) >= oldest]
+                msgs = [self.g.message(m["id"]) for m in reversed(fresh)]
             except GraphError as e:
                 if e.rate_limited:
                     raise

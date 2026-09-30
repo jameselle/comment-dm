@@ -111,4 +111,7 @@ class Store:
             "waiting on a follow": q("select count(*) from contacts where stage = 'gated'"),
             "sent (live)": q("select count(*) from sent where dry_run = 0"),
             "sent (dry run)": q("select count(*) from sent where dry_run = 1"),
+            "follow check": self.get("follow_check") or "not tried yet",
+            "buttons on first DM": self.get("private_reply_buttons") or "not tried yet",
+            "link buttons": self.get("link_buttons") or "not tried yet",
         }

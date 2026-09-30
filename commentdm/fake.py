@@ -119,9 +119,11 @@ class FakeGraph:
                                                     "message": text, "created_time": self.iso(self.now), "_quick_replies": quick_replies})
         return {"recipient_id": igsid, "message_id": self._id()}
 
+    follow_check_unavailable = False
+
     def profile(self, igsid: str) -> Dict[str, Any]:
         self.calls.append(("profile", igsid))
-        if self._last_inbound(igsid) is None:
+        if self._last_inbound(igsid) is None or self.follow_check_unavailable:
             raise GraphError(400, {"error": {"message": "no consent: the user hasn't messaged you", "code": 230}})
         return {"username": f"user{igsid}", "is_user_follow_business": self.follows.get(igsid, False)}
 

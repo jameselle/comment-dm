@@ -232,7 +232,32 @@ class Buttons(Base):
         self.assertEqual(self.g.outbox("201")[-1]["message"], self.camp["deliver_plain"])
 
 
+class FollowCheckUnavailable(Base):
+    def test_when_instagram_wont_say_who_follows_it_asks_once_then_trusts_the_tap(self):
+        self.make()
+        self.g.follow_check_unavailable = True
+        self.g.comment(self.post, "201", "sam", "CLIP")
+        self.e.poll_once()
+        self.g.now += 30
+        self.g.dm("201", "sam", "Send me the tools!")
+        self.e.poll_once()
+        self.assertEqual(self.g.outbox("201")[-1]["message"], self.camp["follow_prompt"])
+        self.g.now += 30
+        self.g.dm("201", "sam", "I followed ✅")
+        self.e.poll_once()
+        self.assertEqual(self.g.outbox("201")[-1]["_buttons"], self.camp["deliver_buttons"])
+        self.assertEqual(self.e.s.get("follow_check"), "unavailable")
+
+
 class ApiBudget(Base):
+    def test_old_messages_are_skipped_without_being_fetched(self):
+        self.make()
+        self.g.dm("401", "friend", "from last week", at=self.g.now - 8 * DAY)
+        self.g.dm("401", "friend", "from before it started", at=self.g.now - 60)
+        self.e.poll_once()
+        self.assertEqual([c for c in self.g.reads if c[0] == "message"], [])
+
+
     def test_a_quiet_round_costs_two_calls_and_group_chats_are_skipped(self):
         self.make()
         self.g.groups = ["team"]

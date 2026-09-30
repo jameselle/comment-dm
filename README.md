@@ -32,6 +32,8 @@ These are Instagram's rules, and every tool follows them, ManyChat included:
 
 So the first DM asks them to reply. Their reply opens the conversation, and everything after that is allowed.
 
+**If Instagram won't say who follows you.** On a new app, Instagram can refuse the follow check even after someone has replied ("User consent is required", code 230). It seems to need Meta's app review. When that happens, comment-dm asks them to follow once, then sends the link when they tap **I followed**, on trust. Once the check works, it verifies again automatically. `python3 -m commentdm status` shows which mode it's in.
+
 ## Safety built in
 
 - **Dry run by default.** `run` only logs what it would send. Add `--live` to actually send. Dry runs keep separate records, so practising never marks a real comment as answered.
