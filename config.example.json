@@ -1,0 +1,29 @@
+{
+  "campaigns": [
+    {
+      "name": "day-1-tools",
+      "keyword": "CLIP",
+      "media": "all",
+      "public_replies": [
+        "Sent! Check your DMs 👀",
+        "Just sent them to you 🙌",
+        "In your DMs now"
+      ],
+      "private_reply": "Hey! 👋 Reply LINK and I'll send you both free tools from today.",
+      "follow_gate": true,
+      "follow_prompt": "Follow me first so you don't miss day 2 (it drops tomorrow), then tap the button 👇",
+      "follow_button": "I followed ✅",
+      "still_not_following": "I can't see the follow yet 👀 Follow me, then tap the button again.",
+      "deliver": "Day 1, both free:\n\n🎬 Clipper: long video in, short clips out\ngithub.com/jameselle/clipper\n\n📱 Teleprompter: the one I read today's video from\ngithub.com/jameselle/teleprompter\n\nDay 2 drops tomorrow.",
+      "max_prompts": 3
+    }
+  ],
+  "safety": {
+    "allowlist": [],
+    "max_dms_per_hour": 60,
+    "poll_seconds": 60,
+    "media_days": 7,
+    "media_limit": 10,
+    "keep_days": 90
+  }
+}
