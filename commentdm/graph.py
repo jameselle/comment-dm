@@ -101,8 +101,8 @@ class Graph:
         return self._call("GET", "me/conversations", {"platform": "instagram", "fields": "id,updated_time", "limit": limit}).get("data", [])
 
     def messages(self, conversation_id: str, limit: int = 20) -> List[Dict[str, Any]]:
-        got = self._call("GET", conversation_id, {"fields": f"messages.limit({limit}){{id,from,message,created_time}}"})
-        return got.get("messages", {}).get("data", [])
+        # The /messages edge takes a field list; nested field expansion on the conversation is refused.
+        return self._call("GET", f"{conversation_id}/messages", {"fields": "id,from,message,created_time", "limit": limit}).get("data", [])
 
     # ---- token upkeep: long-lived tokens last 60 days and can be refreshed once they're a day old
     def refresh_token(self) -> Dict[str, Any]:

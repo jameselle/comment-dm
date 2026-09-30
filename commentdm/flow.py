@@ -191,7 +191,13 @@ class Engine:
                                       "user_id": str(frm.get("id") or ""), "username": frm.get("username") or c.get("username"),
                                       "media_id": media["id"]}))
         for conv in self.g.conversations():
-            for msg in reversed(self.g.messages(conv["id"])):  # the API lists newest first
+            try:
+                msgs = self.g.messages(conv["id"])
+            except GraphError as e:  # one unreadable conversation mustn't stop the round
+                self.log(f"couldn't read a conversation: {e}")
+                bump("unreadable conversation")
+                continue
+            for msg in reversed(msgs):  # the API lists newest first
                 frm = msg.get("from") or {}
                 bump(self.on_message({"id": msg["id"], "from_id": str(frm.get("id") or ""), "username": frm.get("username"),
                                       "text": msg.get("message"), "at": parse_time(msg.get("created_time"))}))
