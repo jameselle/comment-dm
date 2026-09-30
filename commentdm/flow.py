@@ -133,8 +133,14 @@ class Engine:
         self.s.mark_seen(m["id"])
         if m["from_id"] == self.me or m.get("at", 0) < self.started_at():
             return "ignored"
+        if self.now() - m.get("at", 0) > DAY:
+            return "too old to answer"  # Instagram only allows replies within 24 hours of their message
         igsid = m["from_id"]
         contact = self.s.contact(igsid)
+        if contact is not None and contact["stage"] == "awaiting_reply" and m.get("at", 0) <= (contact["updated_at"] or 0):
+            # Instagram copies the comment into the new DM thread, dated when it was commented (before our DM).
+            # It isn't a reply: wait for one.
+            return "waiting for their reply"
         if contact is None:
             camp = self.campaign_for(m.get("text"))
             if not camp or not self.allowed(m.get("username")):
@@ -172,6 +178,10 @@ class Engine:
             self.s.upsert_contact(igsid, stage="gated", prompts=prompts + 1)
             return "asked to follow"
         except GraphError as e:
+            if e.code == 230:
+                # Instagram copies the comment into the new DM thread as if they'd sent it. That isn't consent:
+                # wait for their real reply (the follow check only works after they message us).
+                return "waiting for their reply"
             self.log(f"couldn't message {who}: {e}")
             return f"error {e.code or e.status}"
 

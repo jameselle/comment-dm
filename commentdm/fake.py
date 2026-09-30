@@ -54,7 +54,7 @@ class FakeGraph:
     def _last_inbound(self, igsid: str) -> Optional[float]:
         from .flow import parse_time
         for m in self.inbox.get(igsid, []):
-            if m["from"]["id"] != self.my_id:
+            if m["from"]["id"] != self.my_id and not m.get("_echo_of_comment"):
                 return parse_time(m["created_time"])
         return None
 
@@ -84,6 +84,9 @@ class FakeGraph:
             raise GraphError(400, {"error": {"message": "outside the 7 day window", "code": 10, "error_subcode": 2534022}})
         igsid = c["_igsid"]
         self.private_replied[comment_id] = igsid
+        # Like Instagram: the comment shows up in the new DM thread, attributed to the commenter, but it isn't consent.
+        self.inbox.setdefault(igsid, []).insert(0, {"id": f"m{self._id()}", "from": {"id": igsid, "username": c["from"]["username"]},
+                                                    "message": c["text"], "created_time": c["timestamp"], "_echo_of_comment": True})
         self.inbox.setdefault(igsid, []).insert(0, {"id": f"m{self._id()}", "from": {"id": self.my_id, "username": "me"},
                                                     "message": text, "created_time": self.iso(self.now)})
         return {"recipient_id": igsid, "message_id": self._id()}

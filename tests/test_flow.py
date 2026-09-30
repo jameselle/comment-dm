@@ -136,6 +136,20 @@ class DmFlow(Base):
         self.e.poll_once()
         self.assertEqual(len(self.g.calls), before)
 
+    def test_the_comment_copied_into_the_dm_thread_is_not_treated_as_their_reply(self):
+        self.make()
+        self.g.follows["201"] = True
+        self.g.comment(self.post, "201", "sam", "CLIP")
+        counts = self.e.poll_once()   # private reply goes out; Instagram echoes the comment into the thread
+        self.e.poll_once()
+        self.assertEqual(counts.get("waiting for their reply"), 1)
+        self.assertNotIn(self.camp["deliver"], [m["message"] for m in self.g.outbox("201")])
+        self.assertEqual(self.e.s.contact("201")["stage"], "awaiting_reply")
+        self.g.now += 30
+        self.g.dm("201", "sam", "LINK")   # their real reply
+        self.e.poll_once()
+        self.assertEqual(self.g.outbox("201")[-1]["message"], self.camp["deliver"])
+
     def test_dming_the_keyword_directly_starts_the_flow_too(self):
         self.make()
         self.g.follows["301"] = True
