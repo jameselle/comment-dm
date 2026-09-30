@@ -34,10 +34,14 @@ def store_for(dry_run: bool) -> Store:
 
 
 def cmd_setup() -> None:
-    print("Paste your long-lived Instagram access token when asked (it isn't shown or saved anywhere but the Keychain).")
-    r = subprocess.run(["security", "add-generic-password", "-U", "-s", "comment-dm", "-a", "access-token", "-w"])
-    if r.returncode != 0:
-        raise SystemExit("The Keychain didn't take the token.")
+    import getpass
+    from .graph import keychain_set
+    print("Paste your Instagram access token (from the Meta app's 'Generate token'). It isn't shown, and it's saved only in the Keychain.")
+    token = getpass.getpass("Token: ").strip().strip('"').strip("'")
+    if not token.startswith("IG"):
+        raise SystemExit("That doesn't look like an Instagram token (they start with IG). Copy it again from the Meta app.")
+    keychain_set("access-token", token)
+    print(f"✓ saved ({len(token)} characters)")
     cmd_check()
 
 

@@ -32,9 +32,15 @@ def keychain_get(account: str) -> Optional[str]:
 
 
 def keychain_set(account: str, secret: str) -> None:
-    # -U updates an existing item. The secret goes in through argv to `security`, which is local to this Mac.
-    subprocess.run(["security", "add-generic-password", "-U", "-s", KEYCHAIN_SERVICE, "-a", account, "-w", secret],
-                   check=True, capture_output=True)
+    """Store a secret. It goes to `security` on stdin (its interactive mode), not in argv, so it never shows in
+    the process list; and not through `security`'s own password prompt, which silently cuts input at 128
+    characters (Instagram tokens are longer)."""
+    if any(c in secret for c in '"\\\n\r'):
+        raise ValueError("secret contains quotes, backslashes or line breaks")
+    r = subprocess.run(["security", "-i"], input=f'add-generic-password -U -s {KEYCHAIN_SERVICE} -a {account} -w "{secret}"\n',
+                       capture_output=True, text=True)
+    if r.returncode != 0 or keychain_get(account) != secret:
+        raise RuntimeError("the Keychain didn't store the secret intact")
 
 
 class Graph:
