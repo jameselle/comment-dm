@@ -55,6 +55,22 @@ def cmd_check() -> None:
             print(f"✓ can {label}")
         except GraphError as e:
             print(f"✗ can't {label}: {e}")
+    # Comments: Instagram returns an empty list, not an error, when the token lacks the comments permission.
+    try:
+        posts = g._call("GET", "me/media", {"fields": "id,comments_count", "limit": 10}).get("data", [])
+        with_comments = [p for p in posts if (p.get("comments_count") or 0) > 0]
+        if not with_comments:
+            print("? can't tell yet whether comments are readable: none of your recent posts has a comment")
+        else:
+            seen = sum(len(g.comments(p["id"], limit=5)) for p in with_comments[:3])
+            if seen:
+                print("✓ can read comments")
+            else:
+                total = sum(p["comments_count"] for p in with_comments[:3])
+                print(f"✗ can't read comments: your posts have {total} but the app sees none. In the Meta app, add the "
+                      "instagram_business_manage_comments permission to the Instagram use case, then generate a new token and run setup again.")
+    except GraphError as e:
+        print(f"✗ can't read comments: {e}")
 
 
 def cmd_run(once: bool, live: bool) -> None:
