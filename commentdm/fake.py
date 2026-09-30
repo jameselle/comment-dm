@@ -19,6 +19,7 @@ class FakeGraph:
         self.follows: Dict[str, bool] = {}
         self.private_replied: Dict[str, str] = {}  # comment id -> igsid
         self.calls: List[tuple] = []
+        self.reads: List[tuple] = []  # API reads, kept apart from sends
         self._n = 0
 
     # ---- test helpers
@@ -63,18 +64,25 @@ class FakeGraph:
         return {"user_id": self.my_id, "username": "me"}
 
     def recent_media(self, limit: int = 10) -> List[Dict[str, Any]]:
-        return self.media[:limit]
+        self.reads.append(("recent_media",))
+        return [{**m, "comments_count": len(self.comments_by_media.get(m["id"], []))} for m in self.media[:limit]]
 
     def comments(self, media_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        self.reads.append(("comments", media_id))
         return [{k: v for k, v in c.items() if not k.startswith("_")} for c in self.comments_by_media.get(media_id, [])][:limit]
 
     def reply_public(self, comment_id: str, text: str) -> Dict[str, Any]:
         self.calls.append(("reply_public", comment_id, text))
         return {"id": self._id()}
 
-    def private_reply(self, comment_id: str, text: str) -> Dict[str, Any]:
+    refuse_private_reply_buttons = False
+    refuse_link_buttons = False
+
+    def private_reply(self, comment_id: str, text: str, quick_replies: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
         from .flow import parse_time
-        self.calls.append(("private_reply", comment_id, text))
+        if quick_replies and self.refuse_private_reply_buttons:
+            raise GraphError(400, {"error": {"message": "quick replies aren't supported on private replies", "code": 100}})
+        self.calls.append(("private_reply", comment_id, text, quick_replies))
         c = next((c for cs in self.comments_by_media.values() for c in cs if c["id"] == comment_id), None)
         if c is None:
             raise GraphError(400, {"error": {"message": "no such comment", "code": 100}})
@@ -88,7 +96,18 @@ class FakeGraph:
         self.inbox.setdefault(igsid, []).insert(0, {"id": f"m{self._id()}", "from": {"id": igsid, "username": c["from"]["username"]},
                                                     "message": c["text"], "created_time": c["timestamp"], "_echo_of_comment": True})
         self.inbox.setdefault(igsid, []).insert(0, {"id": f"m{self._id()}", "from": {"id": self.my_id, "username": "me"},
-                                                    "message": text, "created_time": self.iso(self.now)})
+                                                    "message": text, "created_time": self.iso(self.now), "_quick_replies": quick_replies})
+        return {"recipient_id": igsid, "message_id": self._id()}
+
+    def send_link_buttons(self, igsid: str, text: str, buttons: List[Dict[str, str]]) -> Dict[str, Any]:
+        if self.refuse_link_buttons:
+            raise GraphError(400, {"error": {"message": "templates not allowed", "code": 100}})
+        self.calls.append(("send_link_buttons", igsid, text, buttons))
+        last = self._last_inbound(igsid)
+        if last is None or self.now - last > DAY:
+            raise GraphError(400, {"error": {"message": "outside the 24 hour window", "code": 10, "error_subcode": 2534022}})
+        self.inbox.setdefault(igsid, []).insert(0, {"id": f"m{self._id()}", "from": {"id": self.my_id, "username": "me"},
+                                                    "message": text, "created_time": self.iso(self.now), "_buttons": buttons})
         return {"recipient_id": igsid, "message_id": self._id()}
 
     def send(self, igsid: str, text: str, quick_replies: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
@@ -106,8 +125,17 @@ class FakeGraph:
             raise GraphError(400, {"error": {"message": "no consent: the user hasn't messaged you", "code": 230}})
         return {"username": f"user{igsid}", "is_user_follow_business": self.follows.get(igsid, False)}
 
+    groups: List[str] = []
+
     def conversations(self, limit: int = 25) -> List[Dict[str, Any]]:
-        return [{"id": f"c{igsid}"} for igsid in self.inbox][:limit]
+        self.reads.append(("conversations",))
+        out = [{"id": f"c{igsid}", "updated_time": msgs[0]["created_time"] + f"#{len(msgs)}",
+                "participants": {"data": [{"id": self.my_id}, {"id": igsid}]}} for igsid, msgs in self.inbox.items() if msgs]
+        out += [{"id": f"g{g}", "updated_time": "x", "participants": {"data": [{"id": self.my_id}, {"id": "a"}, {"id": "b"}]}} for g in self.groups]
+        return out[:limit]
 
     def messages(self, conversation_id: str, limit: int = 20) -> List[Dict[str, Any]]:
+        self.reads.append(("messages", conversation_id))
+        if conversation_id.startswith("g"):
+            raise GraphError(400, {"error": {"message": "Unsupported get request", "code": 100}})
         return [{k: v for k, v in m.items() if not k.startswith("_")} for m in self.inbox.get(conversation_id[1:], [])][:limit]

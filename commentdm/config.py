@@ -29,6 +29,19 @@ def validate(cfg: Dict[str, Any]) -> List[str]:
         for r in c.get("public_replies", []):
             if len(r) > 300 or r.upper() == r and any(ch.isalpha() for ch in r):
                 errors.append(f"campaigns[{i}].public_replies: under 300 characters and not all capitals (Instagram refuses both)")
+        if c.get("private_reply_button"):
+            if len(c["private_reply_button"]) > 20:
+                errors.append(f"campaigns[{i}].private_reply_button: 20 characters at most")
+            if not str(c.get("private_reply_plain", "")).strip():
+                errors.append(f"campaigns[{i}].private_reply_plain: needed with a button, in case Instagram refuses buttons on private replies (ask them to reply)")
+        if c.get("deliver_buttons") is not None:
+            b = c["deliver_buttons"]
+            if not (isinstance(b, list) and 1 <= len(b) <= 3 and all(isinstance(x, dict) and str(x.get("url", "")).startswith("https://") and 0 < len(str(x.get("title", ""))) <= 20 for x in b)):
+                errors.append(f"campaigns[{i}].deliver_buttons: 1 to 3 buttons, each with a title of 20 characters at most and an https:// url")
+            if not str(c.get("deliver_plain", "")).strip():
+                errors.append(f"campaigns[{i}].deliver_plain: needed with deliver_buttons (the links as text, in case buttons are refused)")
+            if len(str(c.get("deliver", ""))) > 640:
+                errors.append(f"campaigns[{i}].deliver: 640 characters at most when it goes with buttons")
         media = c.get("media", "all")
         if media != "all" and not (isinstance(media, list) and all(isinstance(m, str) for m in media)):
             errors.append(f"campaigns[{i}].media: \"all\" or a list of media ids")

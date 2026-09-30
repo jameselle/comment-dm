@@ -88,6 +88,10 @@ def cmd_run(once: bool, live: bool) -> None:
                 print(time.strftime("%H:%M:%S"), acted, flush=True)
         except GraphError as e:
             print(time.strftime("%H:%M:%S"), f"Instagram said: {e}", flush=True)
+            if e.rate_limited and not once:
+                print(time.strftime("%H:%M:%S"), "Meta's request limit: pausing 15 minutes", flush=True)
+                time.sleep(900)
+                continue
         except OSError as e:
             print(time.strftime("%H:%M:%S"), f"network: {e}", flush=True)
         if once:

@@ -34,7 +34,8 @@ class Base(unittest.TestCase):
         return self.e
 
     def kinds(self):
-        return [c[0] for c in self.g.calls]
+        reads = ("recent_media", "comments", "conversations", "messages", "profile")
+        return [c[0] for c in self.g.calls if c[0] not in reads]
 
 
 class CommentFlow(Base):
@@ -62,7 +63,7 @@ class CommentFlow(Base):
         self.g.comments_by_media[self.post][0]["from"]["id"] = self.g.my_id        # make it really ours
         self.g.comment(self.post, "203", "eve", "love the eclipse shot")           # 'clip' inside a word
         self.e.poll_once()
-        self.assertEqual(self.g.calls, [])
+        self.assertEqual(self.kinds(), [])
         stored = {r["username"]: r["outcome"] for r in self.e.s.db.execute("select username, outcome from comments")}
         self.assertEqual(stored, {"old": "before start", "me": "own comment", "eve": "no keyword"})
 
@@ -75,7 +76,7 @@ class CommentFlow(Base):
         self.g.comment(self.post, "201", "stranger", "CLIP")
         self.g.comment(self.post, "202", "tester", "CLIP")
         self.e.poll_once()
-        self.assertEqual([c[0] for c in self.g.calls], ["reply_public", "private_reply"])
+        self.assertEqual(self.kinds(), ["reply_public", "private_reply"])
         self.assertIn("202", self.g.inbox)
         self.assertNotIn("201", self.g.inbox)
 
@@ -130,11 +131,11 @@ class DmFlow(Base):
 
     def test_after_delivery_further_messages_are_left_for_a_human(self):
         self.start(follows=True)
-        before = len(self.g.calls)
+        before = len(self.kinds())
         self.g.now += 30
         self.g.dm("201", "sam", "thanks legend, CLIP again?")
         self.e.poll_once()
-        self.assertEqual(len(self.g.calls), before)
+        self.assertEqual(len(self.kinds()), before)
 
     def test_the_comment_copied_into_the_dm_thread_is_not_treated_as_their_reply(self):
         self.make()
@@ -161,7 +162,7 @@ class DmFlow(Base):
         self.make()
         self.g.dm("401", "friend", "hey mate how's it going")
         self.e.poll_once()
-        self.assertEqual(self.g.calls, [])
+        self.assertEqual(self.kinds(), [])
 
 
 class Safety(Base):
@@ -169,7 +170,7 @@ class Safety(Base):
         self.make(dry_run=True)
         self.g.comment(self.post, "201", "sam", "CLIP")
         self.e.poll_once()
-        self.assertEqual(self.g.calls, [])
+        self.assertEqual(self.kinds(), [])
         self.assertTrue(any("[dry run] private reply" in l for l in self.logs))
 
     def test_hourly_cap_holds_comments_for_the_next_round(self):
@@ -188,6 +189,72 @@ class Safety(Base):
         self.g.now += 8 * DAY
         self.e.poll_once()
         self.assertNotIn("private_reply", self.kinds())
+
+
+class Buttons(Base):
+    def test_first_dm_has_a_send_me_the_tools_button(self):
+        self.make()
+        self.g.comment(self.post, "201", "sam", "CLIP")
+        self.e.poll_once()
+        dm = self.g.outbox("201")[0]
+        self.assertEqual(dm["message"], self.camp["private_reply"])
+        self.assertEqual(dm["_quick_replies"][0]["title"], "Send me the tools!")
+
+    def test_if_instagram_refuses_the_button_the_plain_text_version_goes_and_is_used_from_then_on(self):
+        self.make()
+        self.g.refuse_private_reply_buttons = True
+        self.g.comment(self.post, "201", "sam", "CLIP")
+        self.g.comment(self.post, "202", "ann", "CLIP")
+        self.e.poll_once()
+        self.assertEqual(self.g.outbox("201")[0]["message"], self.camp["private_reply_plain"])
+        self.assertEqual(self.g.outbox("202")[0]["message"], self.camp["private_reply_plain"])
+        self.assertEqual(self.e.s.get("private_reply_buttons"), "refused")
+
+    def test_tapping_the_button_counts_as_their_reply(self):
+        self.make()
+        self.g.follows["201"] = True
+        self.g.comment(self.post, "201", "sam", "CLIP")
+        self.e.poll_once()
+        self.g.now += 30
+        self.g.dm("201", "sam", "Send me the tools!")
+        self.e.poll_once()
+        self.assertEqual(self.g.outbox("201")[-1]["_buttons"], self.camp["deliver_buttons"])
+
+    def test_links_go_as_text_if_link_buttons_are_refused(self):
+        self.make()
+        self.g.refuse_link_buttons = True
+        self.g.follows["201"] = True
+        self.g.comment(self.post, "201", "sam", "CLIP")
+        self.e.poll_once()
+        self.g.now += 30
+        self.g.dm("201", "sam", "Send me the tools!")
+        self.e.poll_once()
+        self.assertEqual(self.g.outbox("201")[-1]["message"], self.camp["deliver_plain"])
+
+
+class ApiBudget(Base):
+    def test_a_quiet_round_costs_two_calls_and_group_chats_are_skipped(self):
+        self.make()
+        self.g.groups = ["team"]
+        self.g.comment(self.post, "201", "sam", "hello")
+        self.e.poll_once()
+        self.g.reads.clear()
+        self.e.poll_once()   # nothing changed
+        self.assertEqual([c[0] for c in self.g.reads], ["recent_media", "conversations"])
+
+    def test_only_the_post_that_changed_is_read(self):
+        self.make()
+        other = self.g.post()
+        self.e.poll_once()
+        self.g.reads.clear()
+        self.g.comment(other, "201", "sam", "CLIP")
+        self.e.poll_once()
+        self.assertEqual([c for c in self.g.reads if c[0] == "comments"], [("comments", other)])
+
+    def test_rate_limit_is_recognised(self):
+        from commentdm.graph import GraphError
+        self.assertTrue(GraphError(403, {"error": {"message": "Application request limit reached", "code": 4}}).rate_limited)
+        self.assertFalse(GraphError(400, {"error": {"message": "Unsupported get request", "code": 100}}).rate_limited)
 
 
 class Retention(Base):

@@ -24,6 +24,11 @@ class GraphError(Exception):
         self.subcode = err.get("error_subcode")
         super().__init__(f"HTTP {status}: {err.get('message') or body}")
 
+    @property
+    def rate_limited(self) -> bool:
+        """Meta's app or account request limit (codes 4, 17, 32, 613): back off, don't retry straight away."""
+        return self.code in (4, 17, 32, 613) or "request limit" in str(self).lower()
+
 
 def keychain_get(account: str) -> Optional[str]:
     r = subprocess.run(["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account, "-w"],
@@ -73,7 +78,7 @@ class Graph:
 
     # ---- posts and comments
     def recent_media(self, limit: int = 10) -> List[Dict[str, Any]]:
-        return self._call("GET", "me/media", {"fields": "id,caption,timestamp,permalink,media_product_type", "limit": limit}).get("data", [])
+        return self._call("GET", "me/media", {"fields": "id,timestamp,comments_count", "limit": limit}).get("data", [])
 
     def comments(self, media_id: str, limit: int = 50) -> List[Dict[str, Any]]:
         return self._call("GET", f"{media_id}/comments", {"fields": "id,text,timestamp,from,username", "limit": limit}).get("data", [])
@@ -82,9 +87,13 @@ class Graph:
         return self._call("POST", f"{comment_id}/replies", {"message": text})
 
     # ---- messages
-    def private_reply(self, comment_id: str, text: str) -> Dict[str, Any]:
-        """One plain-text DM to someone who commented, within 7 days of the comment."""
-        return self._call("POST", "me/messages", body={"recipient": {"comment_id": comment_id}, "message": {"text": text}})
+    def private_reply(self, comment_id: str, text: str, quick_replies: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
+        """One DM to someone who commented, within 7 days of the comment. Meta documents text only; quick
+        replies are tried first by the flow, which falls back to plain text if Instagram refuses them."""
+        message: Dict[str, Any] = {"text": text}
+        if quick_replies:
+            message["quick_replies"] = [{"content_type": "text", "title": q["title"][:20], "payload": q["payload"]} for q in quick_replies]
+        return self._call("POST", "me/messages", body={"recipient": {"comment_id": comment_id}, "message": message})
 
     def send(self, igsid: str, text: str, quick_replies: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
         """A DM inside the 24 hours after the person last messaged us."""
@@ -93,12 +102,18 @@ class Graph:
             message["quick_replies"] = [{"content_type": "text", "title": q["title"][:20], "payload": q["payload"]} for q in quick_replies]
         return self._call("POST", "me/messages", body={"recipient": {"id": igsid}, "message": message})
 
+    def send_link_buttons(self, igsid: str, text: str, buttons: List[Dict[str, str]]) -> Dict[str, Any]:
+        """A button template: text (640 max) with up to 3 buttons that open a web page."""
+        payload = {"template_type": "button", "text": text[:640],
+                   "buttons": [{"type": "web_url", "url": b["url"], "title": b["title"]} for b in buttons[:3]]}
+        return self._call("POST", "me/messages", body={"recipient": {"id": igsid}, "message": {"attachment": {"type": "template", "payload": payload}}})
+
     def profile(self, igsid: str) -> Dict[str, Any]:
         """Needs the person to have messaged us first. is_user_follow_business: do they follow us."""
         return self._call("GET", igsid, {"fields": "username,is_user_follow_business"})
 
     def conversations(self, limit: int = 25) -> List[Dict[str, Any]]:
-        return self._call("GET", "me/conversations", {"platform": "instagram", "fields": "id,updated_time", "limit": limit}).get("data", [])
+        return self._call("GET", "me/conversations", {"platform": "instagram", "fields": "id,updated_time,participants", "limit": limit}).get("data", [])
 
     def messages(self, conversation_id: str, limit: int = 20) -> List[Dict[str, Any]]:
         # The /messages edge takes a field list; nested field expansion on the conversation is refused.

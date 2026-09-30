@@ -22,6 +22,7 @@ from .store import Store
 
 DAY = 86400
 FOLLOWED_PAYLOAD = "COMMENTDM_FOLLOWED"
+SEND_PAYLOAD = "COMMENTDM_SEND"
 
 
 def parse_time(s: Optional[str]) -> float:
@@ -116,7 +117,7 @@ class Engine:
             if camp.get("public_replies"):
                 reply = random.choice(camp["public_replies"])
                 self._send("public reply", c["id"], camp, lambda: self.g.reply_public(c["id"], reply), f"{who}: {reply}")
-            got = self._send("private reply", c["id"], camp, lambda: self.g.private_reply(c["id"], camp["private_reply"]), f"{who}: {camp['private_reply']}")
+            got = self._private_reply(c, camp, who)
         except GraphError as e:
             self.log(f"couldn't reply to {who}'s comment: {e}")
             return f"error {e.code or e.status}"
@@ -124,6 +125,40 @@ class Engine:
         if not self.s.contact(igsid):
             self.s.upsert_contact(igsid, username=c.get("username"), campaign=camp["name"], stage="awaiting_reply", prompts=0)
         return "replied"
+
+    def _private_reply(self, c: Dict[str, Any], camp: Dict[str, Any], who: str) -> Dict[str, Any]:
+        """With a [Send me the tools!] button if the campaign has one and Instagram hasn't refused buttons on
+        private replies before; otherwise the plain-text version that asks them to reply."""
+        label = camp.get("private_reply_button")
+        if label and self.s.get("private_reply_buttons") != "refused":
+            button = [{"title": label, "payload": SEND_PAYLOAD}]
+            try:
+                got = self._send("private reply", c["id"], camp, lambda: self.g.private_reply(c["id"], camp["private_reply"], button),
+                                 f"{who}: {camp['private_reply']} [{label}]")
+                self.s.put("private_reply_buttons", "ok")
+                return got
+            except GraphError as e:
+                if e.subcode == 2534022 or e.code == 10 and "window" in str(e):
+                    raise  # outside the 7-day window: plain text won't help
+                self.s.put("private_reply_buttons", "refused")
+                self.log(f"Instagram refused a button on the private reply ({e}); using plain text from now on")
+        text = camp.get("private_reply_plain") if label else camp["private_reply"]
+        return self._send("private reply", c["id"], camp, lambda: self.g.private_reply(c["id"], text), f"{who}: {text}")
+
+    def _deliver(self, igsid: str, camp: Dict[str, Any], who: str) -> None:
+        """The links: as tap-to-open buttons when the campaign lists them, else (or if refused) as plain text."""
+        buttons = camp.get("deliver_buttons")
+        if buttons and self.s.get("link_buttons") != "refused":
+            try:
+                self._send("link", igsid, camp, lambda: self.g.send_link_buttons(igsid, camp["deliver"], buttons),
+                           f"{who}: {camp['deliver'][:50]}… [{' | '.join(b['title'] for b in buttons)}]")
+                self.s.put("link_buttons", "ok")
+                return
+            except GraphError as e:
+                self.s.put("link_buttons", "refused")
+                self.log(f"Instagram refused link buttons ({e}); sending the links as text from now on")
+        text = camp.get("deliver_plain") if buttons else camp["deliver"]
+        self._send("link", igsid, camp, lambda: self.g.send(igsid, text), f"{who}: {text[:60]}…")
 
     # ------------------------------------------------------------------ messages
     def on_message(self, m: Dict[str, Any]) -> str:
@@ -165,7 +200,7 @@ class Engine:
             if camp.get("follow_gate", True):
                 follows = bool(self.g.profile(igsid).get("is_user_follow_business"))
             if follows:
-                self._send("link", igsid, camp, lambda: self.g.send(igsid, camp["deliver"]), f"{who}: {camp['deliver'][:60]}…")
+                self._deliver(igsid, camp, who)
                 self.s.upsert_contact(igsid, stage="delivered", delivered_at=self.now())
                 return "delivered"
             prompts = int(contact["prompts"] or 0)
@@ -187,6 +222,9 @@ class Engine:
 
     # ------------------------------------------------------------------ polling (no webhooks needed)
     def poll_once(self) -> Dict[str, int]:
+        """One round, spending as few API calls as possible (a new Meta app gets about 200 an hour):
+        comments are only fetched for a post whose comment count changed, and messages only for a
+        one-to-one conversation that changed. A quiet round costs two calls."""
         counts: Dict[str, int] = {}
         bump = lambda k: counts.__setitem__(k, counts.get(k, 0) + 1)  # noqa: E731
         self.started_at()
@@ -195,15 +233,31 @@ class Engine:
         for media in self.g.recent_media(limit=int(self.safety.get("media_limit", 10))):
             if self.now() - parse_time(media.get("timestamp")) > days * DAY:
                 continue
+            key, count = f"comments:{media['id']}", str(media.get("comments_count"))
+            if media.get("comments_count") is not None and self.s.get(key) == count:
+                continue
+            outcomes = []
             for c in self.g.comments(media["id"]):
                 frm = c.get("from") or {}
-                bump(self.on_comment({"id": c["id"], "text": c.get("text"), "at": parse_time(c.get("timestamp")),
-                                      "user_id": str(frm.get("id") or ""), "username": frm.get("username") or c.get("username"),
-                                      "media_id": media["id"]}))
+                outcomes.append(self.on_comment({"id": c["id"], "text": c.get("text"), "at": parse_time(c.get("timestamp")),
+                                                 "user_id": str(frm.get("id") or ""), "username": frm.get("username") or c.get("username"),
+                                                 "media_id": media["id"]}))
+            for o in outcomes:
+                bump(o)
+            if "capped" not in outcomes:  # a held comment keeps the post on the list for next round
+                self.s.put(key, count)
         for conv in self.g.conversations():
+            people = (conv.get("participants") or {}).get("data", [])
+            if len(people) > 2:
+                continue  # group chats: Instagram's API can't read them
+            key, updated = f"conversation:{conv['id']}", str(conv.get("updated_time"))
+            if conv.get("updated_time") and self.s.get(key) == updated:
+                continue
             try:
                 msgs = self.g.messages(conv["id"])
-            except GraphError as e:  # one unreadable conversation mustn't stop the round
+            except GraphError as e:
+                if e.rate_limited:
+                    raise
                 self.log(f"couldn't read a conversation: {e}")
                 bump("unreadable conversation")
                 continue
@@ -211,4 +265,5 @@ class Engine:
                 frm = msg.get("from") or {}
                 bump(self.on_message({"id": msg["id"], "from_id": str(frm.get("id") or ""), "username": frm.get("username"),
                                       "text": msg.get("message"), "at": parse_time(msg.get("created_time"))}))
+            self.s.put(key, updated)
         return counts
