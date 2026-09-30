@@ -134,8 +134,19 @@ class FakeGraph:
         out += [{"id": f"g{g}", "updated_time": "x", "participants": {"data": [{"id": self.my_id}, {"id": "a"}, {"id": "b"}]}} for g in self.groups]
         return out[:limit]
 
-    def messages(self, conversation_id: str, limit: int = 20) -> List[Dict[str, Any]]:
-        self.reads.append(("messages", conversation_id))
+    def message_ids(self, conversation_id: str) -> List[Dict[str, Any]]:
+        self.reads.append(("message_ids", conversation_id))
         if conversation_id.startswith("g"):
             raise GraphError(400, {"error": {"message": "Unsupported get request", "code": 100}})
+        return [{"id": m["id"], "created_time": m["created_time"]} for m in self.inbox.get(conversation_id[1:], [])]
+
+    def message(self, message_id: str) -> Dict[str, Any]:
+        self.reads.append(("message", message_id))
+        for msgs in self.inbox.values():
+            for m in msgs:
+                if m["id"] == message_id:
+                    return {k: v for k, v in m.items() if not k.startswith("_")}
+        raise GraphError(400, {"error": {"message": "no such message", "code": 100}})
+
+    def messages(self, conversation_id: str, limit: int = 20) -> List[Dict[str, Any]]:
         return [{k: v for k, v in m.items() if not k.startswith("_")} for m in self.inbox.get(conversation_id[1:], [])][:limit]

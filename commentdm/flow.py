@@ -254,14 +254,16 @@ class Engine:
             if conv.get("updated_time") and self.s.get(key) == updated:
                 continue
             try:
-                msgs = self.g.messages(conv["id"])
+                ids = self.g.message_ids(conv["id"])[:20]
+                # Fetch only messages not handled yet (one call each), oldest first.
+                msgs = [self.g.message(m["id"]) for m in reversed(ids) if not self.s.message_seen(m["id"])]
             except GraphError as e:
                 if e.rate_limited:
                     raise
                 self.log(f"couldn't read a conversation: {e}")
                 bump("unreadable conversation")
                 continue
-            for msg in reversed(msgs):  # the API lists newest first
+            for msg in msgs:
                 frm = msg.get("from") or {}
                 bump(self.on_message({"id": msg["id"], "from_id": str(frm.get("id") or ""), "username": frm.get("username"),
                                       "text": msg.get("message"), "at": parse_time(msg.get("created_time"))}))

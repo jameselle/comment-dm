@@ -251,6 +251,15 @@ class ApiBudget(Base):
         self.e.poll_once()
         self.assertEqual([c for c in self.g.reads if c[0] == "comments"], [("comments", other)])
 
+    def test_messages_already_handled_are_not_fetched_again(self):
+        self.make()
+        self.g.dm("401", "friend", "hey mate")
+        self.e.poll_once()
+        self.g.reads.clear()
+        self.g.dm("401", "friend", "you there?")
+        self.e.poll_once()
+        self.assertEqual([c[0] for c in self.g.reads if c[0] == "message"], ["message"])  # only the new one
+
     def test_rate_limit_is_recognised(self):
         from commentdm.graph import GraphError
         self.assertTrue(GraphError(403, {"error": {"message": "Application request limit reached", "code": 4}}).rate_limited)

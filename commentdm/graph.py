@@ -115,9 +115,12 @@ class Graph:
     def conversations(self, limit: int = 25) -> List[Dict[str, Any]]:
         return self._call("GET", "me/conversations", {"platform": "instagram", "fields": "id,updated_time,participants", "limit": limit}).get("data", [])
 
-    def messages(self, conversation_id: str, limit: int = 20) -> List[Dict[str, Any]]:
-        # The /messages edge takes a field list; nested field expansion on the conversation is refused.
-        return self._call("GET", f"{conversation_id}/messages", {"fields": "id,from,message,created_time", "limit": limit}).get("data", [])
+    def message_ids(self, conversation_id: str) -> List[Dict[str, Any]]:
+        """The thread's message ids, newest first. (The /messages edge has its own, much tighter request limit.)"""
+        return self._call("GET", conversation_id, {"fields": "messages"}).get("messages", {}).get("data", [])
+
+    def message(self, message_id: str) -> Dict[str, Any]:
+        return self._call("GET", message_id, {"fields": "id,created_time,from,message"})
 
     # ---- token upkeep: long-lived tokens last 60 days and can be refreshed once they're a day old
     def refresh_token(self) -> Dict[str, Any]:
