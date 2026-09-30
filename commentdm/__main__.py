@@ -67,8 +67,9 @@ def cmd_check() -> None:
                 print("✓ can read comments")
             else:
                 total = sum(p["comments_count"] for p in with_comments[:3])
-                print(f"✗ can't read comments: your posts have {total} but the app sees none. In the Meta app, add the "
-                      "instagram_business_manage_comments permission to the Instagram use case, then generate a new token and run setup again.")
+                print(f"✗ can't read comments: your posts have {total} but the app sees none. Two causes: the Meta app is still "
+                      "in Development mode (switch it to Live), or the token lacks instagram_business_manage_comments (add it to the "
+                      "Instagram use case, generate a new token, run setup again).")
     except GraphError as e:
         print(f"✗ can't read comments: {e}")
 
