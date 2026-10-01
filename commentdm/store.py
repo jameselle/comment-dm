@@ -54,6 +54,9 @@ class Store:
     def contact(self, igsid: str) -> Optional[sqlite3.Row]:
         return self.db.execute("select * from contacts where igsid = ?", (igsid,)).fetchone()
 
+    def contact_by_username(self, username: str) -> Optional[sqlite3.Row]:
+        return self.db.execute("select * from contacts where lower(username) = ?", (username.lstrip("@").lower(),)).fetchone()
+
     def upsert_contact(self, igsid: str, **fields: Any) -> None:
         fields["updated_at"] = self.now()
         existing = self.contact(igsid)

@@ -26,7 +26,7 @@ cat > "$RUN" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>com.commentdm.run</string>
-  <key>ProgramArguments</key><array><string>/usr/bin/python3</string><string>-m</string><string>commentdm</string><string>run</string><string>--live</string></array>
+  <key>ProgramArguments</key><array><string>/usr/bin/python3</string><string>-u</string><string>-m</string><string>commentdm</string><string>run</string><string>--live</string></array>
   <key>WorkingDirectory</key><string>$DIR</string>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>

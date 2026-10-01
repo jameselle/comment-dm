@@ -137,6 +137,33 @@ class DmFlow(Base):
         self.e.poll_once()
         self.assertEqual(len(self.kinds()), before)
 
+    def test_commenting_again_after_delivery_gets_the_links_in_the_private_reply(self):
+        self.start(follows=True)
+        self.g.now += 60
+        again = self.g.comment(self.post, "201", "sam", "CLIP")
+        self.e.poll_once()
+        private = [c for c in self.g.calls if c[0] == "private_reply" and c[1] == again]
+        self.assertEqual(len(private), 1)
+        self.assertEqual(private[0][2], self.camp["deliver_plain"])   # the links themselves, not a promise of them
+        self.assertIsNone(private[0][3])
+        self.assertEqual(self.e.s.contact("201")["stage"], "delivered")
+
+    def test_commenting_again_after_giving_up_starts_over(self):
+        self.start(follows=False)
+        for _ in range(3):
+            self.g.now += 30
+            self.g.dm("201", "sam", "I followed ✅")
+            self.e.poll_once()
+        self.assertEqual(self.e.s.contact("201")["stage"], "gave_up")
+        self.g.follows["201"] = True
+        self.g.now += 60
+        self.g.comment(self.post, "201", "sam", "CLIP")
+        self.e.poll_once()
+        self.g.now += 30
+        self.g.dm("201", "sam", self.camp["private_reply_button"])
+        self.e.poll_once()
+        self.assertEqual(self.g.outbox("201")[-1]["message"], self.camp["deliver"])
+
     def test_the_comment_copied_into_the_dm_thread_is_not_treated_as_their_reply(self):
         self.make()
         self.g.follows["201"] = True

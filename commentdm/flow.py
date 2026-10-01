@@ -113,14 +113,23 @@ class Engine:
             self.log("hourly cap reached: holding comments until next round")
             return "capped"
         who = f"@{c.get('username') or c.get('user_id')}"
+        # Someone commenting again: if they already have the links, a "tap and I'll send them" DM would promise
+        # something the tap can't deliver (delivered contacts are left alone), so the private reply IS the links.
+        prior = self.s.contact_by_username(c["username"]) if c.get("username") else None
         try:
             if camp.get("public_replies"):
                 reply = random.choice(camp["public_replies"])
                 self._send("public reply", c["id"], camp, lambda: self.g.reply_public(c["id"], reply), f"{who}: {reply}")
+            if prior is not None and prior["campaign"] == camp["name"] and prior["stage"] == "delivered":
+                text = camp.get("deliver_plain") or camp["deliver"]
+                self._send("private reply", c["id"], camp, lambda: self.g.private_reply(c["id"], text), f"{who}: {text[:60]}…")
+                return "replied (links again)"
             got = self._private_reply(c, camp, who)
         except GraphError as e:
             self.log(f"couldn't reply to {who}'s comment: {e}")
             return f"error {e.code or e.status}"
+        if prior is not None and prior["stage"] == "gave_up":
+            self.s.upsert_contact(prior["igsid"], campaign=camp["name"], stage="awaiting_reply", prompts=0)  # a fresh try
         igsid = str(got.get("recipient_id") or f"comment:{c['id']}")
         if not self.s.contact(igsid):
             self.s.upsert_contact(igsid, username=c.get("username"), campaign=camp["name"], stage="awaiting_reply", prompts=0)
