@@ -3,9 +3,9 @@
 Your own ManyChat-style auto-reply for Instagram, running on your Mac. Someone comments a keyword on your post or reel, and comment-dm:
 
 1. **Replies to the comment** in public ("Sent! Check your DMs 👀").
-2. **DMs them**, asking them to reply to get the link.
+2. **DMs them** with a **Send me the tools!** button.
 3. **Checks whether they follow you.** If they don't, it asks them to follow and gives them an **I followed ✅** button.
-4. **Sends the link** once they follow.
+4. **Sends the links** as tap-to-open buttons once they follow.
 
 Someone who DMs you the keyword directly skips to step 3. Ordinary DMs are never answered: those stay for you.
 
@@ -13,26 +13,26 @@ Someone who DMs you the keyword directly skips to step 3. Ordinary DMs are never
 $ python3 -m commentdm simulate
 @sam comments "clip please!" on your reel
    ↳ public reply: Just sent them to you 🙌
-   ← DM: Hey! 👋 Reply LINK and I'll send you both free tools from today.
-@sam replies "LINK" (sam doesn't follow you yet)
+   ← DM: Hey! 👋 Tap the button and I'll send you both free tools from today.
+@sam taps "Send me the tools!" (sam doesn't follow you yet)
    ← DM: Follow me first so you don't miss day 2 (it drops tomorrow), then tap the button 👇
 @sam follows you, then taps the button
-   ← DM: Day 1, both free: …
+   ← DM: Day 1, both free 👇 Tap to open.
 ```
 
-No monthly fee and no contact limit. It needs Python 3.9 or newer, which comes with macOS; there's nothing to install.
+No monthly fee and no contact limit. It needs Python 3.9 or newer, which comes with macOS; there's nothing to install. It works for anyone who comments on **your own** account without Meta's App Review.
 
 ## Why the flow looks like this
 
 These are Instagram's rules, and every tool follows them, ManyChat included:
 
-- **The first DM to someone who only commented** (a "private reply") must be plain text, with no buttons. You get **one per comment**, within **7 days** of it.
-- **You can only message them again after they reply**, and then only within **24 hours** of their last message.
+- **The first DM to someone who only commented** is a "private reply": **one per comment**, within **7 days** of it. Meta documents it as text only, but Instagram accepts a quick-reply button on it. If it ever refuses, comment-dm falls back to text that asks them to reply.
+- **You can only message them again after they reply** (tapping the button counts), and then only within **24 hours** of their last message.
 - **Instagram only tells you whether they follow you** once they've messaged you.
 
-So the first DM asks them to reply. Their reply opens the conversation, and everything after that is allowed.
+So the first DM gets them to tap. The tap opens the conversation, and everything after that is allowed.
 
-**If Instagram won't say who follows you.** On a new app, Instagram can refuse the follow check even after someone has replied ("User consent is required", code 230). It seems to need Meta's app review. When that happens, comment-dm asks them to follow once, then sends the link when they tap **I followed**, on trust. Once the check works, it verifies again automatically. `python3 -m commentdm status` shows which mode it's in.
+**If Instagram won't say who follows you** ("User consent is required", code 230), comment-dm asks them to follow once, then sends the links when they tap **I followed**, on trust. It verifies again automatically once the check works. The usual cause is a missing webhook subscription, which `check` fixes ([setup, step 4](docs/SETUP.md#4-install-comment-dm-and-connect-it-5-min)).
 
 ## Safety built in
 
@@ -47,64 +47,23 @@ So the first DM asks them to reply. Their reply opens the conversation, and ever
 
 ## Set it up
 
-### 1. An Instagram professional account
+**[docs/SETUP.md](docs/SETUP.md) walks through all of it**, from a fresh Instagram account to the background service, with what you should see at each step and a table of Meta's misleading errors. In short:
 
-It must be a Creator or Business account. In Instagram: Settings → *Account type and tools* → *Switch to professional account*. Then allow message access: Settings → *Messages and story replies* → *Message controls* → *Allow access to messages*.
+1. Make your Instagram account a Creator or Business account, and allow access to messages.
+2. Publish a privacy policy (`docs/privacy.html` is a template) and data deletion instructions.
+3. Create a Meta app (use case **Manage messaging & content on Instagram**), add your account, generate a token, fill in App settings → Basic, and switch the app to **Live**. Development mode hides real comments.
+4. Connect it:
 
-### 2. A Meta app (free)
+   ```sh
+   git clone https://github.com/jameselle/comment-dm.git && cd comment-dm
+   python3 -m commentdm setup          # paste the token; it goes into the Keychain. Then it checks everything
+   cp config.example.json config.json  # your keyword, messages and links
+   ```
 
-1. Go to [developers.facebook.com](https://developers.facebook.com), open **My Apps**, then **Create app**.
-2. Choose the use case **Manage messaging & content on Instagram**, then **Business** as the app type.
-3. In the app, open **Instagram → API setup with Instagram business login**. Under **Generate access tokens**, click **Add account** and log in with your Instagram account. Approve **instagram_business_basic**, **instagram_business_manage_messages** and **instagram_business_manage_comments**.
-4. Click **Generate token** and copy it. It lasts 60 days, and comment-dm refreshes it for you once the service is installed.
+5. Test with your second account on the allowlist: `python3 -m commentdm run --live`.
+6. Empty the allowlist and leave it running: `./install-service.sh`.
 
-### 3. Connect it
-
-```sh
-git clone <this repo> comment-dm && cd comment-dm
-python3 -m commentdm setup          # paste the token when asked; it goes into the Keychain
-cp config.example.json config.json  # then edit your keyword, messages and links
-```
-
-`setup` finishes by checking that the token can read your posts and your DMs.
-
-### 4. Test before it goes live
-
-1. **Dry run.** `python3 -m commentdm run --once` shows what it would send for new keyword comments. Comment your keyword from another account to see it.
-2. **Live, testers only.** Put your second account in `safety.allowlist`. In the Meta app, add that account under **App roles → Roles → Instagram Testers**. Accept the invite on Instagram (Settings → *Website permissions* → *Apps and websites* → *Tester invites*). Then `python3 -m commentdm run --live`, comment the keyword from the tester account, and go through the whole flow.
-3. **Open it up.** Empty the allowlist and run live.
-
-### 5. Leave it running
-
-```sh
-./install-service.sh          # runs it in the background, and refreshes the token every Monday
-./install-service.sh remove   # stop it
-python3 -m commentdm status   # what it has done
-python3 -m commentdm forget @username   # someone asked for their data to be deleted
-```
-
-## Meta's approval (App Review)
-
-Meta gives a new app **Standard Access**, which covers *Instagram accounts you own or manage*: your own account. Whether Standard Access is enough to reply to strangers who comment varies, and your testers-only run won't show it, because testers have a role on the app.
-
-In practice, open it up and check whether a stranger's comment gets its DM. If Instagram answers with a permissions error (`python3 -m commentdm status` and `logs/run.log` show it), submit your app for review:
-
-- In **App Review → Permissions and features**, request **Advanced Access** for `instagram_business_manage_messages` and `instagram_business_manage_comments`.
-- Complete **Business Verification** when Meta asks for it.
-- Add a **privacy policy URL**. `docs/privacy.html` is a starting point: fill it in and publish it, for example with GitHub Pages.
-- Record a **screencast** of the flow, the testers-only run from step 4.2.
-
-### Instant replies instead of checking every minute (optional)
-
-By default it checks for new comments and DMs every `poll_seconds` (60). For instant replies, Meta can push events to you (webhooks). That needs an approved, **Live** app with Advanced Access and business verification, plus a public HTTPS address in front of this Mac, such as Cloudflare Tunnel or Tailscale Funnel. Then:
-
-```sh
-security add-generic-password -U -s comment-dm -a app-secret -w     # your Meta app secret
-security add-generic-password -U -s comment-dm -a verify-token -w   # any string you also enter in Meta's webhook setup
-python3 -m commentdm webhook --port 8793 --live
-```
-
-In the Meta app, set the callback URL to your tunnel address, and subscribe to `comments` and `messages`.
+**No App Review needed for your own account.** Standard Access covers Instagram accounts you own or manage, and that includes DMing strangers who comment on them. You'd only need Advanced Access (App Review plus Business Verification) to run it for someone else's account.
 
 ## Config
 
@@ -115,10 +74,12 @@ In the Meta app, set the callback URL to your tunnel address, and subscribe to `
 | `keyword` | One word, any case, matched as a whole word ("clip!" matches, "eclipse" doesn't). |
 | `media` | `"all"`, or a list of post IDs to use this keyword on. |
 | `public_replies` | Picked at random for the public reply. Keep each under 300 characters, and not all capitals. |
-| `private_reply` | The first DM. Plain text. **Ask them to reply**, or the conversation can't continue. |
+| `private_reply`, `private_reply_button` | The first DM and its button (20 characters at most). Tapping it opens the conversation. |
+| `private_reply_plain` | Used if Instagram ever refuses the button: **ask them to reply**, or the conversation can't continue. |
 | `follow_gate` | `true` to require a follow before sending the link. |
 | `follow_prompt`, `follow_button`, `still_not_following` | The follow ask, its button (20 characters at most) and the re-ask. |
-| `deliver` | The message with your link(s). |
+| `deliver`, `deliver_buttons` | The message with your links, and up to 3 tap-to-open buttons (`title` 20 characters at most, `url` https). |
+| `deliver_plain` | The links as text, used if Instagram refuses buttons, and as the private reply when someone who already has them comments again. |
 | `max_prompts` | How many times to ask someone to follow before giving up. |
 | `safety.*` | `allowlist`, `max_dms_per_hour`, `poll_seconds`, `media_days` (only posts from the last N days), `media_limit` (how many recent posts to watch), `keep_days` (records are deleted after this many days; default 90), `recheck_minutes` (re-read every watched post this often even if its comment count hasn't changed, which catches a deleted comment replaced by a new one; default 10). |
 

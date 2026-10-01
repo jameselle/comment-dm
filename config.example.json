@@ -34,7 +34,7 @@
   "safety": {
     "allowlist": [],
     "max_dms_per_hour": 60,
-    "poll_seconds": 60,
+    "poll_seconds": 15,
     "media_days": 7,
     "media_limit": 10,
     "keep_days": 90

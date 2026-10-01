@@ -2,13 +2,13 @@
 auto-reply for Instagram, running on your Mac.
 
   python3 -m commentdm setup                 store your Instagram access token in the Keychain, then check it
-  python3 -m commentdm check                 who am I, and can I read comments and DMs
+  python3 -m commentdm check                 who am I, can I read comments and DMs; turns on the webhook subscription
   python3 -m commentdm run [--once] [--live] poll and answer (a dry run unless --live)
   python3 -m commentdm simulate              watch the whole flow against a fake Instagram, offline
   python3 -m commentdm status                what it has done so far
   python3 -m commentdm forget @username      delete everything held about one person (a deletion request)
   python3 -m commentdm refresh-token         extend the token (lasts 60 days; run weekly from launchd)
-  python3 -m commentdm webhook [--port N]    receive events instead of polling (needs Meta's approval)
+  python3 -m commentdm webhook [--port N]    receive events the moment they happen (needs a public HTTPS address)
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from pathlib import Path
 
 from .config import load
 from .flow import Engine
-from .graph import Graph, GraphError, keychain_get
+from .graph import Graph, GraphError, ensure_subscribed, keychain_get
 from .store import Store
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -55,6 +55,13 @@ def cmd_check() -> None:
             print(f"✓ can {label}")
         except GraphError as e:
             print(f"✗ can't {label}: {e}")
+    try:
+        if ensure_subscribed(g) == "subscribed":
+            print("✓ subscribed your account to the app's webhooks (without it Instagram refuses every DM after the first)")
+        else:
+            print("✓ webhook subscription on")
+    except GraphError as e:
+        print(f"✗ can't subscribe your account to the app's webhooks, so every DM after the first will be refused: {e}")
     # Comments: Instagram returns an empty list, not an error, when the token lacks the comments permission.
     try:
         posts = g._call("GET", "me/media", {"fields": "id,comments_count", "limit": 10}).get("data", [])
@@ -126,9 +133,10 @@ def cmd_simulate() -> None:
         if call[0] == "reply_public":
             print(f"   ↳ public reply: {call[2]}")
     n = show("201", 0)
-    print("@sam replies \"LINK\" (sam doesn't follow you yet)")
+    tap = cfg["campaigns"][0].get("private_reply_button") or "LINK"
+    print(f"@sam taps \"{tap}\" (sam doesn't follow you yet)")
     g.now += 5
-    g.dm("201", "sam", "LINK")
+    g.dm("201", "sam", tap)
     engine.poll_once()
     n = show("201", n)
     print("@sam follows you, then taps the button")

@@ -12,6 +12,7 @@ from pathlib import Path
 from commentdm.config import validate
 from commentdm.fake import FakeGraph
 from commentdm.flow import FOLLOWED_PAYLOAD, Engine, keyword_in
+from commentdm.graph import WEBHOOK_FIELDS, ensure_subscribed
 from commentdm.store import Store
 from commentdm.webhook import events, signature_ok
 
@@ -329,6 +330,26 @@ class ApiBudget(Base):
         from commentdm.graph import GraphError
         self.assertTrue(GraphError(403, {"error": {"message": "Application request limit reached", "code": 4}}).rate_limited)
         self.assertFalse(GraphError(400, {"error": {"message": "Unsupported get request", "code": 100}}).rate_limited)
+
+
+class Subscription(Base):
+    def test_without_the_webhook_subscription_every_dm_after_the_private_reply_is_refused_until_subscribed(self):
+        self.make()
+        self.g.subscribed = []          # a polling app never subscribes by itself
+        self.g.follows["201"] = True
+        self.g.comment(self.post, "201", "sam", "CLIP")
+        self.e.poll_once()
+        self.g.now += 30
+        self.g.dm("201", "sam", "LINK")
+        self.e.poll_once()
+        self.assertNotIn(self.camp["deliver"], [m["message"] for m in self.g.outbox("201")])
+        self.assertEqual(ensure_subscribed(self.g), "subscribed")
+        self.assertEqual(sorted(self.g.subscribed), sorted(WEBHOOK_FIELDS))
+        self.assertEqual(ensure_subscribed(self.g), "already")
+        self.g.now += 30
+        self.g.dm("201", "sam", "LINK")
+        self.e.poll_once()
+        self.assertEqual(self.g.outbox("201")[-1]["message"], self.camp["deliver"])
 
 
 class Retention(Base):

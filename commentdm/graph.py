@@ -30,6 +30,21 @@ class GraphError(Exception):
         return self.code in (4, 17, 32, 613) or "request limit" in str(self).lower()
 
 
+WEBHOOK_FIELDS = ["messages", "messaging_postbacks", "comments"]
+
+
+def ensure_subscribed(g: Any) -> str:
+    """Subscribe your account to the app's webhooks, even though comment-dm polls. Without it Instagram doesn't
+    count their DMs as reaching the app: every DM after the private reply fails "outside of allowed window"
+    (code 10, subcode 2534022) and the follow check fails "user consent is required" (230). No callback URL
+    is needed. Returns "already" or "subscribed"."""
+    have = set(g.subscribed_fields())
+    if set(WEBHOOK_FIELDS) <= have:
+        return "already"
+    g.subscribe(sorted(have | set(WEBHOOK_FIELDS)))
+    return "subscribed"
+
+
 def keychain_get(account: str) -> Optional[str]:
     r = subprocess.run(["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account, "-w"],
                        capture_output=True, text=True)
@@ -121,6 +136,13 @@ class Graph:
 
     def message(self, message_id: str) -> Dict[str, Any]:
         return self._call("GET", message_id, {"fields": "id,created_time,from,message"})
+
+    def subscribed_fields(self) -> List[str]:
+        got = self._call("GET", "me/subscribed_apps").get("data", [])
+        return [f for app in got for f in app.get("subscribed_fields", [])]
+
+    def subscribe(self, fields: List[str]) -> Dict[str, Any]:
+        return self._call("POST", "me/subscribed_apps", {"subscribed_fields": ",".join(fields)})
 
     # ---- token upkeep: long-lived tokens last 60 days and can be refreshed once they're a day old
     def refresh_token(self) -> Dict[str, Any]:

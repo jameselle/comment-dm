@@ -1,6 +1,6 @@
-"""Optional: receive events the moment they happen instead of polling. Meta only sends Instagram webhooks
-to a Live app with Advanced Access and business verification, at a public HTTPS address (a tunnel such
-as Cloudflare Tunnel or Tailscale Funnel in front of this Mac). Until then, `run` polls.
+"""Optional: receive events the moment they happen instead of polling. Meta sends them to a Live app at a
+public HTTPS address (a tunnel such as Cloudflare Tunnel or Tailscale Funnel in front of this Mac), for
+accounts subscribed to the app (`check` subscribes yours). Until then, `run` polls. Not yet tried live.
 """
 from __future__ import annotations
 

@@ -54,6 +54,8 @@ class FakeGraph:
 
     def _last_inbound(self, igsid: str) -> Optional[float]:
         from .flow import parse_time
+        if "messages" not in self.subscribed:
+            return None  # unsubscribed: Instagram doesn't count their DMs as reaching the app (no window, no consent)
         for m in self.inbox.get(igsid, []):
             if m["from"]["id"] != self.my_id and not m.get("_echo_of_comment"):
                 return parse_time(m["created_time"])
@@ -120,6 +122,15 @@ class FakeGraph:
         return {"recipient_id": igsid, "message_id": self._id()}
 
     follow_check_unavailable = False
+    subscribed: List[str] = ["messages", "messaging_postbacks", "comments"]
+
+    def subscribed_fields(self) -> List[str]:
+        return list(self.subscribed)
+
+    def subscribe(self, fields: List[str]) -> Dict[str, Any]:
+        self.calls.append(("subscribe", tuple(fields)))
+        self.subscribed = list(fields)
+        return {"success": True}
 
     def profile(self, igsid: str) -> Dict[str, Any]:
         self.calls.append(("profile", igsid))
