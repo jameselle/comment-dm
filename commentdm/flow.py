@@ -235,17 +235,21 @@ class Engine:
     def poll_once(self) -> Dict[str, int]:
         """One round, spending as few API calls as possible (a new Meta app gets about 200 an hour):
         comments are only fetched for a post whose comment count changed, and messages only for a
-        one-to-one conversation that changed. A quiet round costs two calls."""
+        one-to-one conversation that changed. A quiet round costs two calls. Each post is also re-read every
+        `recheck_minutes` (10) whatever its count says: a deleted comment plus a new one leaves the count unchanged."""
         counts: Dict[str, int] = {}
         bump = lambda k: counts.__setitem__(k, counts.get(k, 0) + 1)  # noqa: E731
         self.started_at()
         self.s.prune(self.now() - float(self.safety.get("keep_days", 90)) * DAY)
         days = float(self.safety.get("media_days", 7))
+        recheck = float(self.safety.get("recheck_minutes", 10)) * 60
         for media in self.g.recent_media(limit=int(self.safety.get("media_limit", 10))):
             if self.now() - parse_time(media.get("timestamp")) > days * DAY:
                 continue
             key, count = f"comments:{media['id']}", str(media.get("comments_count"))
-            if media.get("comments_count") is not None and self.s.get(key) == count:
+            read_key = f"comments_read:{media['id']}"
+            fresh_read = self.now() - float(self.s.get(read_key) or 0) < recheck
+            if media.get("comments_count") is not None and self.s.get(key) == count and fresh_read:
                 continue
             outcomes = []
             for c in self.g.comments(media["id"]):
@@ -257,6 +261,7 @@ class Engine:
                 bump(o)
             if "capped" not in outcomes:  # a held comment keeps the post on the list for next round
                 self.s.put(key, count)
+            self.s.put(read_key, str(self.now()))
         for conv in self.g.conversations():
             people = (conv.get("participants") or {}).get("data", [])
             if len(people) > 2:

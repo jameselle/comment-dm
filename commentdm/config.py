@@ -46,7 +46,7 @@ def validate(cfg: Dict[str, Any]) -> List[str]:
         if media != "all" and not (isinstance(media, list) and all(isinstance(m, str) for m in media)):
             errors.append(f"campaigns[{i}].media: \"all\" or a list of media ids")
     s = cfg.get("safety", {})
-    for k in ("max_dms_per_hour", "poll_seconds", "media_days", "media_limit", "keep_days"):
+    for k in ("max_dms_per_hour", "poll_seconds", "media_days", "media_limit", "keep_days", "recheck_minutes"):
         if k in s and not (isinstance(s[k], (int, float)) and s[k] > 0):
             errors.append(f"safety.{k}: a positive number")
     if "allowlist" in s and not (isinstance(s["allowlist"], list) and all(isinstance(u, str) for u in s["allowlist"])):

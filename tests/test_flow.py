@@ -276,6 +276,19 @@ class ApiBudget(Base):
         self.e.poll_once()
         self.assertEqual([c for c in self.g.reads if c[0] == "comments"], [("comments", other)])
 
+    def test_a_deleted_then_reposted_comment_is_found_by_the_periodic_recheck(self):
+        self.make()
+        old = self.g.comment(self.post, "201", "sam", "CLIP")
+        self.e.poll_once()
+        self.g.comments_by_media[self.post] = [c for c in self.g.comments_by_media[self.post] if c["id"] != old]
+        self.g.comment(self.post, "201", "sam", "CLIP")   # same count as before, so the cheap check sees no change
+        self.g.now += 60
+        self.e.poll_once()
+        self.assertEqual(len([c for c in self.g.calls if c[0] == "reply_public"]), 1)
+        self.g.now += 10 * 60
+        self.e.poll_once()
+        self.assertEqual(len([c for c in self.g.calls if c[0] == "reply_public"]), 2)
+
     def test_messages_already_handled_are_not_fetched_again(self):
         self.make()
         self.g.dm("401", "friend", "hey mate")

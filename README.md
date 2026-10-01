@@ -120,7 +120,7 @@ In the Meta app, set the callback URL to your tunnel address, and subscribe to `
 | `follow_prompt`, `follow_button`, `still_not_following` | The follow ask, its button (20 characters at most) and the re-ask. |
 | `deliver` | The message with your link(s). |
 | `max_prompts` | How many times to ask someone to follow before giving up. |
-| `safety.*` | `allowlist`, `max_dms_per_hour`, `poll_seconds`, `media_days` (only posts from the last N days), `media_limit` (how many recent posts to watch), `keep_days` (records are deleted after this many days; default 90). |
+| `safety.*` | `allowlist`, `max_dms_per_hour`, `poll_seconds`, `media_days` (only posts from the last N days), `media_limit` (how many recent posts to watch), `keep_days` (records are deleted after this many days; default 90), `recheck_minutes` (re-read every watched post this often even if its comment count hasn't changed, which catches a deleted comment replaced by a new one; default 10). |
 
 ## Tests
 
