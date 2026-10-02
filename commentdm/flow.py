@@ -128,8 +128,10 @@ class Engine:
         except GraphError as e:
             self.log(f"couldn't reply to {who}'s comment: {e}")
             return f"error {e.code or e.status}"
-        if prior is not None and prior["stage"] == "gave_up":
-            self.s.upsert_contact(prior["igsid"], campaign=camp["name"], stage="awaiting_reply", prompts=0)  # a fresh try
+        if prior is not None and (prior["stage"] == "gave_up" or prior["campaign"] != camp["name"]):
+            # A fresh try, or a new day's keyword from someone who already went through another campaign:
+            # they're now in this one, so their tap gets this campaign's link (not "already delivered").
+            self.s.upsert_contact(prior["igsid"], campaign=camp["name"], stage="awaiting_reply", prompts=0)
         igsid = str(got.get("recipient_id") or f"comment:{c['id']}")
         if not self.s.contact(igsid):
             self.s.upsert_contact(igsid, username=c.get("username"), campaign=camp["name"], stage="awaiting_reply", prompts=0)

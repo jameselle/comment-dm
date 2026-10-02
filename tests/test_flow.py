@@ -165,6 +165,26 @@ class DmFlow(Base):
         self.e.poll_once()
         self.assertEqual(self.g.outbox("201")[-1]["message"], self.camp["deliver"])
 
+    def test_someone_with_one_days_links_who_comments_the_next_days_keyword_gets_that_link_too(self):
+        # Real case (2026-10-02): someone who had the CLIP links commented AUTO on the next post and tapped
+        # "Send me the tool!", and got nothing: the contact stayed on CLIP's campaign as "delivered".
+        self.start(follows=True)
+        self.assertEqual(self.e.s.contact("201")["stage"], "delivered")
+        day2 = copy.deepcopy(self.camp)
+        day2.update(name="day-2", keyword="AUTO", deliver="Day 2, free. Tap to open.", deliver_plain="Day 2: github.com/x/day2",
+                    deliver_buttons=[{"title": "Day 2", "url": "https://github.com/x/day2"}])
+        self.e.campaigns.append(day2)
+        self.g.now += 60
+        self.g.comment(self.post, "201", "sam", "AUTO")
+        self.e.poll_once()
+        self.assertEqual(self.g.outbox("201")[-1]["message"], self.camp["private_reply"], "asked to tap, not sent day 1's links again")
+        self.g.now += 30
+        self.g.dm("201", "sam", day2["private_reply_button"])
+        self.e.poll_once()
+        self.assertEqual(self.g.outbox("201")[-1]["message"], day2["deliver"])
+        self.assertEqual(self.e.s.contact("201")["campaign"], "day-2")
+        self.assertEqual(self.e.s.contact("201")["stage"], "delivered")
+
     def test_the_comment_copied_into_the_dm_thread_is_not_treated_as_their_reply(self):
         self.make()
         self.g.follows["201"] = True
