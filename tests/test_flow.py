@@ -166,7 +166,7 @@ class DmFlow(Base):
         self.assertEqual(self.g.outbox("201")[-1]["message"], self.camp["deliver"])
 
     def test_someone_with_one_days_links_who_comments_the_next_days_keyword_gets_that_link_too(self):
-        # Real case (2026-10-02): @bizsketch had the CLIP links, commented AUTO on the next post and tapped
+        # Real case (2026-10-02): someone who had the CLIP links commented AUTO on the next post and tapped
         # "Send me the tool!", and got nothing: the contact stayed on CLIP's campaign as "delivered".
         self.start(follows=True)
         self.assertEqual(self.e.s.contact("201")["stage"], "delivered")
