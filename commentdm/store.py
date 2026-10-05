@@ -14,7 +14,7 @@ create table if not exists comments (
 );
 create table if not exists contacts (
   igsid text, username text, campaign text, stage text,
-  prompts integer default 0, last_inbound_at real, updated_at real, delivered_at real,
+  prompts integer default 0, last_inbound_at real, updated_at real, delivered_at real, nudged_at real,
   primary key (igsid, campaign)
 );
 create table if not exists seen_messages (id text primary key, at real);
@@ -31,6 +31,9 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self._migrate()
         self.db.executescript(SCHEMA)
+        if "nudged_at" not in [r["name"] for r in self.db.execute("pragma table_info(contacts)")]:
+            self.db.execute("alter table contacts add column nudged_at real")  # the one follow-up nudge, added 2026-10-05
+            self.db.commit()
 
     def _migrate(self) -> None:
         """Contacts used to hold one campaign per person, so a new day's keyword replaced the last one and a tap on
@@ -38,8 +41,9 @@ class Store:
         pk = [r["name"] for r in self.db.execute("pragma table_info(contacts)") if r["pk"]]
         if pk == ["igsid"]:
             self.db.executescript("begin; alter table contacts rename to contacts_old;" + SCHEMA +
-                                  "insert into contacts select igsid, username, campaign, stage, prompts, last_inbound_at,"
-                                  " updated_at, delivered_at from contacts_old; drop table contacts_old; commit;")
+                                  "insert into contacts(igsid, username, campaign, stage, prompts, last_inbound_at, updated_at, delivered_at)"
+                                  " select igsid, username, campaign, stage, prompts, last_inbound_at, updated_at, delivered_at"
+                                  " from contacts_old; drop table contacts_old; commit;")
 
     # ---- key/value (the start time, cursors)
     def get(self, key: str) -> Optional[str]:
@@ -92,6 +96,11 @@ class Store:
         """When they last messaged us, on every campaign row (it's about the person, so updated_at stays put)."""
         self.db.execute("update contacts set last_inbound_at = max(coalesce(last_inbound_at, 0), ?) where igsid = ?", (at, igsid))
         self.db.commit()
+
+    def nudge_candidates(self, since: float) -> List[sqlite3.Row]:
+        """Asked to follow, not nudged yet, and messaged us after `since` (so their 24 hours are still open)."""
+        return self.db.execute("select * from contacts where stage = 'gated' and nudged_at is null and last_inbound_at >= ?"
+                               " order by igsid, updated_at", (since,)).fetchall()
 
     UNANSWERED = "stage in ('awaiting_reply', 'gated') and last_inbound_at > updated_at"
 

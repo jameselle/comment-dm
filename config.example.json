@@ -28,7 +28,8 @@
         }
       ],
       "deliver_plain": "Day 1, both free:\n\n🎬 Clipper: long video in, short clips out\ngithub.com/jameselle/clipper\n\n📱 Teleprompter: the one I read today's video from\ngithub.com/jameselle/teleprompter\n\nDay 2 drops tomorrow.",
-      "max_prompts": 3
+      "max_prompts": 3,
+      "nudge_after_minutes": 180
     }
   ],
   "safety": {

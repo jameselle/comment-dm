@@ -5,6 +5,7 @@
   they reply (consent) ────► do they follow?  yes ─► send the link(s)                 [delivered]
                                               no  ─► "follow, then tap"  + ✅ button   [gated]
   they tap / reply again ──► follow check again, up to max_prompts times, then stop   [gave_up]
+  no tap after a few hours ► one nudge: followed by now? the link. Not yet? one reminder [nudge_after_minutes]
 
 Instagram's windows: a private reply within 7 days of the comment; anything else within 24 hours of
 their last message. Someone who DMs the keyword directly (no comment) enters at "they reply".
@@ -25,6 +26,8 @@ from .graph import GraphError
 from .store import Store
 
 DAY = 86400
+NUDGE_AFTER_MINUTES = 180  # default; a campaign's nudge_after_minutes overrides it, 0 turns nudges off
+NUDGE_MARGIN = 3600        # never nudge in the last hour of someone's 24-hour window
 FOLLOWED_PAYLOAD = "COMMENTDM_FOLLOWED"
 SEND_PAYLOAD = "COMMENTDM_SEND"
 
@@ -267,6 +270,55 @@ class Engine:
             done.append("gave up (never followed)")
         return ", ".join(done)
 
+    # ------------------------------------------------------------------ nudges
+    def nudge_due(self) -> Dict[str, int]:
+        """One follow-up for people asked to follow who haven't tapped since: inside their 24 hours (they messaged us,
+        so Instagram allows it), once per campaign. People who never tapped the first button can't be messaged at all."""
+        counts: Dict[str, int] = {}
+        by_name = {c["name"]: c for c in self.campaigns}
+        due: Dict[str, List[Tuple[Any, Dict[str, Any]]]] = {}
+        for r in self.s.nudge_candidates(self.now() - DAY + NUDGE_MARGIN):
+            camp = by_name.get(r["campaign"])
+            after = float(camp.get("nudge_after_minutes", NUDGE_AFTER_MINUTES)) if camp else 0
+            if after > 0 and self.now() - (r["updated_at"] or 0) >= after * 60:
+                due.setdefault(r["igsid"], []).append((r, camp))
+        for igsid, pairs in due.items():
+            if not self.under_cap():
+                self.log("hourly cap reached: nudges wait for the next round")
+                break
+            got = self._nudge(igsid, pairs)
+            counts[got] = counts.get(got, 0) + 1
+        return counts
+
+    def _nudge(self, igsid: str, pairs: List[Tuple[Any, Dict[str, Any]]]) -> str:
+        who = f"@{pairs[-1][0]['username'] or igsid}"
+        try:
+            try:
+                follows: Optional[bool] = bool(self.g.profile(igsid).get("is_user_follow_business"))
+            except GraphError as e:
+                if e.code != 230:
+                    raise
+                follows = None  # Instagram won't say: remind them rather than assume
+            if follows:
+                # They followed and never tapped "I followed": that was the point of asking, so send what they're owed.
+                for _, camp in pairs:
+                    self._deliver(igsid, camp, who)
+                    self.s.upsert_contact(igsid, camp["name"], stage="delivered", delivered_at=self.now(), nudged_at=self.now())
+                return "delivered after a nudge"
+            camp = pairs[-1][1]
+            text = camp.get("still_not_following", camp["follow_prompt"])
+            button = [{"title": camp.get("follow_button", "I followed ✅"), "payload": FOLLOWED_PAYLOAD}]
+            self._send("follow reminder", igsid, camp, lambda: self.g.send(igsid, text, button), f"{who}: {text}")
+        except GraphError as e:
+            self.log(f"couldn't nudge {who}: {e}")
+            outcome = f"nudge error {e.code or e.status}"
+        else:
+            outcome = "follow reminder"
+        for r, c in pairs:  # once only, even after an error: a refused nudge isn't retried every round
+            if self.s.contact(igsid, c["name"])["stage"] == "gated":
+                self.s.upsert_contact(igsid, c["name"], nudged_at=self.now())
+        return outcome
+
     # ------------------------------------------------------------------ polling (no webhooks needed)
     def poll_once(self) -> Dict[str, int]:
         """One round, spending as few API calls as possible (a new Meta app gets about 200 an hour):
@@ -323,4 +375,6 @@ class Engine:
                 bump(self.on_message({"id": msg["id"], "from_id": str(frm.get("id") or ""), "username": frm.get("username"),
                                       "text": msg.get("message"), "at": parse_time(msg.get("created_time"))}))
             self.s.put(key, updated)
+        for k, n in self.nudge_due().items():
+            counts[k] = counts.get(k, 0) + n
         return counts

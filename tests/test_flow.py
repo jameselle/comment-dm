@@ -333,6 +333,104 @@ class DmFlow(Base):
         self.assertEqual(self.kinds(), [])
 
 
+class Nudges(Base):
+    """Someone who tapped but didn't follow: one nudge, a few hours later, while their 24 hours are still open."""
+    HOURS = 3 * 3600 + 60
+    start, add_day2 = DmFlow.start, DmFlow.add_day2
+
+    def sent(self):
+        return [m["message"] for m in self.g.outbox("201")]
+
+    def test_someone_who_followed_but_never_tapped_gets_the_link_at_nudge_time(self):
+        self.start(follows=False)
+        self.g.follows["201"] = True
+        self.g.now += self.HOURS
+        counts = self.e.poll_once()
+        self.assertEqual(self.g.outbox("201")[-1]["message"], self.camp["deliver"])
+        self.assertEqual(self.e.s.contact("201")["stage"], "delivered")
+        self.assertNotIn(self.camp["still_not_following"], self.sent())
+        self.assertEqual(counts.get("delivered after a nudge"), 1, counts)
+
+    def test_someone_still_not_following_gets_one_reminder_with_the_button_and_no_more(self):
+        self.start(follows=False)
+        self.g.now += self.HOURS
+        self.e.poll_once()
+        reminder = self.g.outbox("201")[-1]
+        self.assertEqual(reminder["message"], self.camp["still_not_following"])
+        self.assertEqual(reminder["_quick_replies"][0]["payload"], FOLLOWED_PAYLOAD)
+        self.g.now += self.HOURS
+        self.e.poll_once()
+        self.assertEqual(self.sent().count(self.camp["still_not_following"]), 1)
+        self.assertEqual(self.e.s.contact("201")["stage"], "gated")
+        self.g.follows["201"] = True   # the normal flow carries on after the nudge
+        self.g.now += 30
+        self.g.dm("201", "sam", self.camp["follow_button"])
+        self.e.poll_once()
+        self.assertEqual(self.g.outbox("201")[-1]["message"], self.camp["deliver"])
+
+    def test_nothing_is_sent_before_the_nudge_is_due(self):
+        self.start(follows=False)
+        before = len(self.kinds())
+        self.g.now += 3600
+        self.e.poll_once()
+        self.assertEqual(len(self.kinds()), before)
+
+    def test_nothing_is_sent_once_their_24_hours_have_closed(self):
+        self.start(follows=False)
+        before = len(self.kinds())
+        self.g.now += 23.5 * 3600
+        self.e.poll_once()
+        self.assertEqual(len(self.kinds()), before)
+
+    def test_a_campaign_can_turn_nudges_off(self):
+        self.make()
+        self.e.campaigns[0]["nudge_after_minutes"] = 0
+        self.g.comment(self.post, "201", "sam", "CLIP")
+        self.e.poll_once()
+        self.g.now += 30
+        self.g.dm("201", "sam", "LINK")
+        self.e.poll_once()
+        before = len(self.kinds())
+        self.g.now += self.HOURS
+        self.e.poll_once()
+        self.assertEqual(len(self.kinds()), before)
+
+    def test_two_campaigns_waiting_get_one_follow_check_and_one_message(self):
+        self.make()
+        day2 = self.add_day2()
+        self.g.comment(self.post, "201", "sam", "CLIP")
+        self.g.comment(self.post, "201", "sam", "AUTO")
+        self.e.poll_once()
+        self.g.now += 30
+        self.g.dm("201", "sam", "Send me the tools!")
+        self.e.poll_once()
+        self.g.calls.clear()
+        self.g.now += self.HOURS
+        self.e.poll_once()
+        self.assertEqual([c[0] for c in self.g.calls], ["profile", "send"])
+        self.assertTrue(all(r["nudged_at"] for r in self.e.s.contacts("201")))
+
+    def test_both_waiting_links_go_at_nudge_time_once_they_follow(self):
+        self.make()
+        day2 = self.add_day2()
+        self.g.comment(self.post, "201", "sam", "CLIP")
+        self.g.comment(self.post, "201", "sam", "AUTO")
+        self.e.poll_once()
+        self.g.now += 30
+        self.g.dm("201", "sam", "Send me the tools!")
+        self.e.poll_once()
+        self.g.follows["201"] = True
+        self.g.now += self.HOURS
+        self.e.poll_once()
+        self.assertIn(self.camp["deliver"], self.sent())
+        self.assertIn(day2["deliver"], self.sent())
+
+    def test_nudge_setting_is_validated(self):
+        bad = copy.deepcopy(EXAMPLE)
+        bad["campaigns"][0]["nudge_after_minutes"] = -5
+        self.assertIn("nudge_after_minutes", " ".join(validate(bad)))
+
+
 class Safety(Base):
     def test_dry_run_sends_nothing(self):
         self.make(dry_run=True)

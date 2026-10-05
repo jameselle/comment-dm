@@ -42,6 +42,8 @@ def validate(cfg: Dict[str, Any]) -> List[str]:
                 errors.append(f"campaigns[{i}].deliver_plain: needed with deliver_buttons (the links as text, in case buttons are refused)")
             if len(str(c.get("deliver", ""))) > 640:
                 errors.append(f"campaigns[{i}].deliver: 640 characters at most when it goes with buttons")
+        if "nudge_after_minutes" in c and not (isinstance(c["nudge_after_minutes"], (int, float)) and 0 <= c["nudge_after_minutes"] < 23 * 60):
+            errors.append(f"campaigns[{i}].nudge_after_minutes: 0 (off) up to 1379, inside Instagram's 24 hours")
         media = c.get("media", "all")
         if media != "all" and not (isinstance(media, list) and all(isinstance(m, str) for m in media)):
             errors.append(f"campaigns[{i}].media: \"all\" or a list of media ids")

@@ -81,6 +81,7 @@ So the first DM gets them to tap. The tap opens the conversation, and everything
 | `deliver`, `deliver_buttons` | The message with your links, and up to 3 tap-to-open buttons (`title` 20 characters at most, `url` https). |
 | `deliver_plain` | The links as text, used if Instagram refuses buttons, and as the private reply when someone who already has them comments again. |
 | `max_prompts` | How many times to ask someone to follow before giving up. |
+| `nudge_after_minutes` | Someone asked to follow who hasn't tapped since gets **one** nudge this many minutes later (default 180, `0` turns it off): the link if they've followed by then, otherwise `still_not_following` with its button. It only goes inside their 24 hours. People who never tapped the first button can't be messaged at all (Instagram's rule), so they get nothing. Polling only: `webhook` mode doesn't nudge yet. |
 | `safety.*` | `allowlist`, `max_dms_per_hour`, `poll_seconds`, `media_days` (only posts from the last N days), `media_limit` (how many recent posts to watch), `keep_days` (records are deleted after this many days; default 90), `recheck_minutes` (re-read every watched post this often even if its comment count hasn't changed, which catches a deleted comment replaced by a new one; default 10). |
 
 ## Checking on it
