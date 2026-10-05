@@ -8,6 +8,10 @@
 
 Instagram's windows: a private reply within 7 days of the comment; anything else within 24 hours of
 their last message. Someone who DMs the keyword directly (no comment) enters at "they reply".
+
+Each person has their own place in each campaign, so yesterday's untapped button still works after they comment
+today's keyword. A reply can't say which button it came from (polling reads only its text), so one reply answers
+every campaign they're waiting on.
 """
 from __future__ import annotations
 
@@ -15,7 +19,7 @@ import random
 import re
 import time
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .graph import GraphError
 from .store import Store
@@ -115,12 +119,13 @@ class Engine:
         who = f"@{c.get('username') or c.get('user_id')}"
         # Someone commenting again: if they already have the links, a "tap and I'll send them" DM would promise
         # something the tap can't deliver (delivered contacts are left alone), so the private reply IS the links.
-        prior = self.s.contact_by_username(c["username"]) if c.get("username") else None
+        prior = self.s.contact_by_username(c["username"], camp["name"]) if c.get("username") else None
+        known = self.s.contact_by_username(c["username"]) if c.get("username") else None
         try:
             if camp.get("public_replies"):
                 reply = random.choice(camp["public_replies"])
                 self._send("public reply", c["id"], camp, lambda: self.g.reply_public(c["id"], reply), f"{who}: {reply}")
-            if prior is not None and prior["campaign"] == camp["name"] and prior["stage"] == "delivered":
+            if prior is not None and prior["stage"] == "delivered":
                 text = camp.get("deliver_plain") or camp["deliver"]
                 self._send("private reply", c["id"], camp, lambda: self.g.private_reply(c["id"], text), f"{who}: {text[:60]}…")
                 return "replied (links again)"
@@ -128,13 +133,10 @@ class Engine:
         except GraphError as e:
             self.log(f"couldn't reply to {who}'s comment: {e}")
             return f"error {e.code or e.status}"
-        if prior is not None and (prior["stage"] == "gave_up" or prior["campaign"] != camp["name"]):
-            # A fresh try, or a new day's keyword from someone who already went through another campaign:
-            # they're now in this one, so their tap gets this campaign's link (not "already delivered").
-            self.s.upsert_contact(prior["igsid"], campaign=camp["name"], stage="awaiting_reply", prompts=0)
-        igsid = str(got.get("recipient_id") or f"comment:{c['id']}")
-        if not self.s.contact(igsid):
-            self.s.upsert_contact(igsid, username=c.get("username"), campaign=camp["name"], stage="awaiting_reply", prompts=0)
+        igsid = prior["igsid"] if prior is not None else str(got.get("recipient_id") or (known["igsid"] if known else f"comment:{c['id']}"))
+        if prior is None or prior["stage"] == "gave_up":
+            # New to this campaign (whatever other campaigns they're in), or a fresh try after giving up.
+            self.s.upsert_contact(igsid, camp["name"], username=c.get("username"), stage="awaiting_reply", prompts=0)
         return "replied"
 
     def _private_reply(self, c: Dict[str, Any], camp: Dict[str, Any], who: str) -> Dict[str, Any]:
@@ -182,33 +184,39 @@ class Engine:
         if self.now() - m.get("at", 0) > DAY:
             return "too old to answer"  # Instagram only allows replies within 24 hours of their message
         igsid = m["from_id"]
-        contact = self.s.contact(igsid)
-        if contact is not None and contact["stage"] == "awaiting_reply" and m.get("at", 0) <= (contact["updated_at"] or 0):
-            # Instagram copies the comment into the new DM thread, dated when it was commented (before our DM).
-            # It isn't a reply: wait for one.
-            return "waiting for their reply"
-        if contact is None:
-            camp = self.campaign_for(m.get("text"))
-            if not camp or not self.allowed(m.get("username")):
+        rows = self.s.contacts(igsid)
+        # Instagram copies the comment into the new DM thread, dated when it was commented (before our DM). It isn't
+        # a reply: a campaign still awaiting one only counts messages that came after we asked.
+        waiting = [r for r in rows if r["stage"] == "gated" or r["stage"] == "awaiting_reply" and m.get("at", 0) > (r["updated_at"] or 0)]
+        camp = self.campaign_for(m.get("text"))
+        if camp and self.allowed(m.get("username")) and not any(r["campaign"] == camp["name"] for r in rows):
+            # The keyword sent as a DM (no comment): it starts that campaign, whatever else they're in.
+            self.s.upsert_contact(igsid, camp["name"], username=m.get("username"), stage="awaiting_reply", prompts=0)
+            waiting.append(self.s.contact(igsid, camp["name"]))
+        if not waiting:
+            if not rows:
                 return "not a keyword DM"  # an ordinary DM: leave it for a human
-            self.s.upsert_contact(igsid, username=m.get("username"), campaign=camp["name"], stage="awaiting_reply", prompts=0)
-            contact = self.s.contact(igsid)
-        if contact["stage"] in ("delivered", "gave_up"):
-            return f"already {contact['stage']}"
-        camp = next((c for c in self.campaigns if c["name"] == contact["campaign"]), None)
-        if camp is None:
+            if any(r["stage"] == "awaiting_reply" for r in rows):
+                return "waiting for their reply"
+            return f"already {rows[-1]['stage']}"
+        by_name = {c["name"]: c for c in self.campaigns}
+        pairs = [(r, by_name[r["campaign"]]) for r in waiting if r["campaign"] in by_name]
+        if not pairs:
             return "campaign removed"
-        self.s.upsert_contact(igsid, last_inbound_at=m.get("at") or self.now())
+        self.s.touch_inbound(igsid, m.get("at") or self.now())
         if not self.under_cap():
             self.log("hourly cap reached: will answer when the next message arrives")
             return "capped"
-        return self._gate_or_deliver(igsid, contact, camp)
+        return self._gate_or_deliver(igsid, pairs)
 
-    def _gate_or_deliver(self, igsid: str, contact: Any, camp: Dict[str, Any]) -> str:
-        who = f"@{contact['username'] or igsid}"
+    def _gate_or_deliver(self, igsid: str, pairs: List[Tuple[Any, Dict[str, Any]]]) -> str:
+        """pairs: (their row, its campaign), oldest first. One follow check, every link they're owed, and at most
+        one follow prompt however many campaigns are waiting on a follow."""
+        who = f"@{pairs[-1][0]['username'] or igsid}"
+        delivered, ask, gave_up = 0, [], 0
         try:
             follows: Optional[bool] = True
-            if camp.get("follow_gate", True):
+            if any(camp.get("follow_gate", True) for _, camp in pairs):
                 try:
                     follows = bool(self.g.profile(igsid).get("is_user_follow_business"))
                     self.s.put("follow_check", "ok")
@@ -219,21 +227,28 @@ class Engine:
                     # app review / webhooks). Fall back to trust: ask them to follow, then send on their tap.
                     self.s.put("follow_check", "unavailable")
                     follows = None
-            if follows is None:
-                follows = int(contact["prompts"] or 0) >= 1  # they've been asked once and answered: take their word
-            if follows:
-                self._deliver(igsid, camp, who)
-                self.s.upsert_contact(igsid, stage="delivered", delivered_at=self.now())
-                return "delivered"
-            prompts = int(contact["prompts"] or 0)
-            if prompts >= int(camp.get("max_prompts", 3)):
-                self.s.upsert_contact(igsid, stage="gave_up")
-                return "gave up (never followed)"
-            text = camp["follow_prompt"] if prompts == 0 else camp.get("still_not_following", camp["follow_prompt"])
-            button = [{"title": camp.get("follow_button", "I followed ✅"), "payload": FOLLOWED_PAYLOAD}]
-            self._send("follow prompt", igsid, camp, lambda: self.g.send(igsid, text, button), f"{who}: {text}")
-            self.s.upsert_contact(igsid, stage="gated", prompts=prompts + 1)
-            return "asked to follow"
+            for row, camp in pairs:
+                prompts = int(row["prompts"] or 0)
+                ok = True if not camp.get("follow_gate", True) else follows
+                if ok is None:
+                    ok = prompts >= 1  # they've been asked once and answered: take their word
+                if ok:
+                    self._deliver(igsid, camp, who)
+                    self.s.upsert_contact(igsid, camp["name"], stage="delivered", delivered_at=self.now())
+                    delivered += 1
+                elif prompts >= int(camp.get("max_prompts", 3)):
+                    self.s.upsert_contact(igsid, camp["name"], stage="gave_up")
+                    gave_up += 1
+                else:
+                    ask.append((row, camp))
+            if ask:
+                row, camp = ask[-1]  # the newest campaign's wording
+                prompts = int(row["prompts"] or 0)
+                text = camp["follow_prompt"] if prompts == 0 else camp.get("still_not_following", camp["follow_prompt"])
+                button = [{"title": camp.get("follow_button", "I followed ✅"), "payload": FOLLOWED_PAYLOAD}]
+                self._send("follow prompt", igsid, camp, lambda: self.g.send(igsid, text, button), f"{who}: {text}")
+                for r, c in ask:
+                    self.s.upsert_contact(igsid, c["name"], stage="gated", prompts=int(r["prompts"] or 0) + 1)
         except GraphError as e:
             if e.code == 230:
                 # Instagram copies the comment into the new DM thread as if they'd sent it. That isn't consent:
@@ -241,6 +256,14 @@ class Engine:
                 return "waiting for their reply"
             self.log(f"couldn't message {who}: {e}")
             return f"error {e.code or e.status}"
+        done = []
+        if delivered:
+            done.append("delivered" if delivered == 1 else f"delivered {delivered}")
+        if ask:
+            done.append("asked to follow")
+        if gave_up:
+            done.append("gave up (never followed)")
+        return ", ".join(done)
 
     # ------------------------------------------------------------------ polling (no webhooks needed)
     def poll_once(self) -> Dict[str, int]:

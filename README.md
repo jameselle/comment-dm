@@ -67,7 +67,7 @@ So the first DM gets them to tap. The tap opens the conversation, and everything
 
 ## Config
 
-`config.json` holds one or more campaigns, each with its own keyword:
+`config.json` holds one or more campaigns, each with its own keyword. Someone can be in several at once (yesterday's button still works after they comment today's keyword), and one reply sends every link they're waiting on.
 
 | Field | What it's for |
 |---|---|

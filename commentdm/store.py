@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 SCHEMA = """
 create table if not exists comments (
@@ -13,8 +13,9 @@ create table if not exists comments (
   commented_at real, handled_at real, outcome text
 );
 create table if not exists contacts (
-  igsid text primary key, username text, campaign text, stage text,
-  prompts integer default 0, last_inbound_at real, updated_at real, delivered_at real
+  igsid text, username text, campaign text, stage text,
+  prompts integer default 0, last_inbound_at real, updated_at real, delivered_at real,
+  primary key (igsid, campaign)
 );
 create table if not exists seen_messages (id text primary key, at real);
 create table if not exists sent (at real, kind text, target text, campaign text, dry_run integer);
@@ -28,7 +29,17 @@ class Store:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(str(path))
         self.db.row_factory = sqlite3.Row
+        self._migrate()
         self.db.executescript(SCHEMA)
+
+    def _migrate(self) -> None:
+        """Contacts used to hold one campaign per person, so a new day's keyword replaced the last one and a tap on
+        the older day's button was lost. They're now one row per person per campaign: re-key an old table."""
+        pk = [r["name"] for r in self.db.execute("pragma table_info(contacts)") if r["pk"]]
+        if pk == ["igsid"]:
+            self.db.executescript("begin; alter table contacts rename to contacts_old;" + SCHEMA +
+                                  "insert into contacts select igsid, username, campaign, stage, prompts, last_inbound_at,"
+                                  " updated_at, delivered_at from contacts_old; drop table contacts_old; commit;")
 
     # ---- key/value (the start time, cursors)
     def get(self, key: str) -> Optional[str]:
@@ -50,22 +61,36 @@ class Store:
         )
         self.db.commit()
 
-    # ---- contacts (people in a flow)
-    def contact(self, igsid: str) -> Optional[sqlite3.Row]:
-        return self.db.execute("select * from contacts where igsid = ?", (igsid,)).fetchone()
+    # ---- contacts (where each person is in each campaign: one row per person per campaign)
+    def contact(self, igsid: str, campaign: Optional[str] = None) -> Optional[sqlite3.Row]:
+        """Their row in `campaign`, or without one their most recently updated row."""
+        if campaign is not None:
+            return self.db.execute("select * from contacts where igsid = ? and campaign = ?", (igsid, campaign)).fetchone()
+        return self.db.execute("select * from contacts where igsid = ? order by updated_at desc limit 1", (igsid,)).fetchone()
 
-    def contact_by_username(self, username: str) -> Optional[sqlite3.Row]:
-        return self.db.execute("select * from contacts where lower(username) = ?", (username.lstrip("@").lower(),)).fetchone()
+    def contacts(self, igsid: str) -> List[sqlite3.Row]:
+        """Every campaign they're in, oldest first."""
+        return self.db.execute("select * from contacts where igsid = ? order by updated_at", (igsid,)).fetchall()
 
-    def upsert_contact(self, igsid: str, **fields: Any) -> None:
+    def contact_by_username(self, username: str, campaign: Optional[str] = None) -> Optional[sqlite3.Row]:
+        u = username.lstrip("@").lower()
+        if campaign is not None:
+            return self.db.execute("select * from contacts where lower(username) = ? and campaign = ?", (u, campaign)).fetchone()
+        return self.db.execute("select * from contacts where lower(username) = ? order by updated_at desc limit 1", (u,)).fetchone()
+
+    def upsert_contact(self, igsid: str, campaign: str, **fields: Any) -> None:
         fields["updated_at"] = self.now()
-        existing = self.contact(igsid)
-        if existing:
+        if self.contact(igsid, campaign):
             sets = ", ".join(f"{k} = ?" for k in fields)
-            self.db.execute(f"update contacts set {sets} where igsid = ?", (*fields.values(), igsid))
+            self.db.execute(f"update contacts set {sets} where igsid = ? and campaign = ?", (*fields.values(), igsid, campaign))
         else:
-            cols = ["igsid", *fields.keys()]
-            self.db.execute(f"insert into contacts({', '.join(cols)}) values({', '.join('?' for _ in cols)})", (igsid, *fields.values()))
+            cols = ["igsid", "campaign", *fields.keys()]
+            self.db.execute(f"insert into contacts({', '.join(cols)}) values({', '.join('?' for _ in cols)})", (igsid, campaign, *fields.values()))
+        self.db.commit()
+
+    def touch_inbound(self, igsid: str, at: float) -> None:
+        """When they last messaged us, on every campaign row (it's about the person, so updated_at stays put)."""
+        self.db.execute("update contacts set last_inbound_at = ? where igsid = ?", (at, igsid))
         self.db.commit()
 
     # ---- inbound messages already processed
@@ -109,7 +134,7 @@ class Store:
         q = lambda sql: self.db.execute(sql).fetchone()[0]  # noqa: E731
         return {
             "comments handled": q("select count(*) from comments"),
-            "people in a flow": q("select count(*) from contacts"),
+            "people in a flow": q("select count(distinct igsid) from contacts"),
             "links delivered": q("select count(*) from contacts where delivered_at is not null"),
             "waiting on a follow": q("select count(*) from contacts where stage = 'gated'"),
             "sent (live)": q("select count(*) from sent where dry_run = 0"),

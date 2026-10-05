@@ -185,6 +185,96 @@ class DmFlow(Base):
         self.assertEqual(self.e.s.contact("201")["campaign"], "day-2")
         self.assertEqual(self.e.s.contact("201")["stage"], "delivered")
 
+    def add_day2(self):
+        day2 = copy.deepcopy(self.camp)
+        day2.update(name="day-2", keyword="AUTO", deliver="Day 2, free. Tap to open.", deliver_plain="Day 2: github.com/x/day2",
+                    deliver_buttons=[{"title": "Day 2", "url": "https://github.com/x/day2"}])
+        self.e.campaigns.append(day2)
+        return day2
+
+    def test_an_untapped_button_from_one_day_still_delivers_after_commenting_the_next_days_keyword(self):
+        # Real case (2026-10-05): someone commented the Day 4 keyword and didn't tap, commented the Day 5 keyword
+        # the next day, then tapped both buttons. Only Day 5's link went: the person held one campaign at a time,
+        # so the Day 4 tap was swallowed as "already delivered".
+        self.make()
+        self.g.follows["201"] = True
+        day2 = self.add_day2()
+        self.g.comment(self.post, "201", "sam", "CLIP")
+        self.e.poll_once()
+        self.g.now += DAY - 600
+        self.g.comment(self.post, "201", "sam", "AUTO")
+        self.e.poll_once()
+        self.g.now += 60
+        self.g.dm("201", "sam", self.camp["private_reply_button"])
+        self.g.dm("201", "sam", day2["private_reply_button"])
+        counts = self.e.poll_once()
+        sent = [m["message"] for m in self.g.outbox("201")]
+        self.assertEqual(sent.count(self.camp["deliver"]), 1)
+        self.assertEqual(sent.count(day2["deliver"]), 1)
+        self.assertEqual(self.e.s.contact("201", self.camp["name"])["stage"], "delivered")
+        self.assertEqual(self.e.s.contact("201", "day-2")["stage"], "delivered")
+        self.assertEqual(counts.get("delivered 2"), 1, counts)   # the first tap sends both; the second has nothing left
+
+    def test_one_reply_answers_every_campaign_they_are_waiting_on(self):
+        self.make()
+        self.g.follows["201"] = True
+        day2 = self.add_day2()
+        self.g.comment(self.post, "201", "sam", "CLIP")
+        self.g.comment(self.post, "201", "sam", "AUTO")
+        self.e.poll_once()
+        self.g.now += 30
+        self.g.dm("201", "sam", "Send me the tools!")
+        self.e.poll_once()
+        sent = [m["message"] for m in self.g.outbox("201")]
+        self.assertEqual(sent.count(self.camp["deliver"]), 1)
+        self.assertEqual(sent.count(day2["deliver"]), 1)
+        self.g.now += 30
+        self.g.dm("201", "sam", "thanks!")   # a later message sends nothing more
+        before = len(self.kinds())
+        self.e.poll_once()
+        self.assertEqual(len(self.kinds()), before)
+
+    def test_a_non_follower_waiting_on_two_campaigns_gets_one_follow_prompt_then_both_links(self):
+        self.make()
+        day2 = self.add_day2()
+        self.g.comment(self.post, "201", "sam", "CLIP")
+        self.g.comment(self.post, "201", "sam", "AUTO")
+        self.e.poll_once()
+        self.g.now += 30
+        self.g.dm("201", "sam", "Send me the tools!")
+        self.e.poll_once()
+        prompts = [m for m in self.g.outbox("201") if m["message"] == self.camp["follow_prompt"]]
+        self.assertEqual(len(prompts), 1)
+        self.g.follows["201"] = True
+        self.g.now += 30
+        self.g.dm("201", "sam", "I followed ✅")
+        self.e.poll_once()
+        sent = [m["message"] for m in self.g.outbox("201")]
+        self.assertIn(self.camp["deliver"], sent)
+        self.assertIn(day2["deliver"], sent)
+
+    def test_dming_a_new_days_keyword_after_another_days_links_starts_that_campaign(self):
+        self.start(follows=True)
+        day2 = self.add_day2()
+        self.g.now += 60
+        self.g.dm("201", "sam", "auto")
+        self.e.poll_once()
+        self.assertEqual(self.g.outbox("201")[-1]["message"], day2["deliver"])
+
+    def test_a_store_from_before_campaigns_were_tracked_separately_is_migrated(self):
+        path = Path(tempfile.mkdtemp()) / "old.sqlite"
+        import sqlite3
+        db = sqlite3.connect(str(path))
+        db.executescript("create table contacts (igsid text primary key, username text, campaign text, stage text, "
+                         "prompts integer default 0, last_inbound_at real, updated_at real, delivered_at real);"
+                         "insert into contacts values ('201', 'sam', 'day-1', 'delivered', 0, 5.0, 6.0, 6.0);")
+        db.commit()
+        db.close()
+        s = Store(path)
+        self.assertEqual(s.contact("201", "day-1")["stage"], "delivered")
+        s.upsert_contact("201", "day-2", stage="awaiting_reply", prompts=0)
+        self.assertEqual({r["campaign"] for r in s.contacts("201")}, {"day-1", "day-2"})
+
     def test_the_comment_copied_into_the_dm_thread_is_not_treated_as_their_reply(self):
         self.make()
         self.g.follows["201"] = True
