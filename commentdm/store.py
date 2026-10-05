@@ -90,8 +90,22 @@ class Store:
 
     def touch_inbound(self, igsid: str, at: float) -> None:
         """When they last messaged us, on every campaign row (it's about the person, so updated_at stays put)."""
-        self.db.execute("update contacts set last_inbound_at = ? where igsid = ?", (at, igsid))
+        self.db.execute("update contacts set last_inbound_at = max(coalesce(last_inbound_at, 0), ?) where igsid = ?", (at, igsid))
         self.db.commit()
+
+    UNANSWERED = "stage in ('awaiting_reply', 'gated') and last_inbound_at > updated_at"
+
+    def unanswered(self) -> List[sqlite3.Row]:
+        """Campaigns still waiting after the person's latest message: they replied and got nothing back (an error,
+        the hourly cap, or a bug). Every inbound message from someone in a flow is recorded before it's decided."""
+        return self.db.execute(f"select * from contacts where {self.UNANSWERED} order by last_inbound_at").fetchall()
+
+    def mark_handled(self, username: str) -> int:
+        """Their unanswered campaigns were answered by hand: count them as delivered."""
+        n = self.db.execute(f"update contacts set stage = 'delivered', delivered_at = ?, updated_at = ? where lower(username) = ? and {self.UNANSWERED}",
+                            (self.now(), self.now(), username.lstrip("@").lower())).rowcount
+        self.db.commit()
+        return n
 
     # ---- inbound messages already processed
     def message_seen(self, mid: str) -> bool:
@@ -137,6 +151,7 @@ class Store:
             "people in a flow": q("select count(distinct igsid) from contacts"),
             "links delivered": q("select count(*) from contacts where delivered_at is not null"),
             "waiting on a follow": q("select count(*) from contacts where stage = 'gated'"),
+            "replies left unanswered": q(f"select count(*) from contacts where {self.UNANSWERED}"),
             "sent (live)": q("select count(*) from sent where dry_run = 0"),
             "sent (dry run)": q("select count(*) from sent where dry_run = 1"),
             "follow check": self.get("follow_check") or "not tried yet",

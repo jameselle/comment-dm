@@ -7,6 +7,8 @@ auto-reply for Instagram, running on your Mac.
   python3 -m commentdm simulate              watch the whole flow against a fake Instagram, offline
   python3 -m commentdm status                what it has done so far
   python3 -m commentdm forget @username      delete everything held about one person (a deletion request)
+  python3 -m commentdm unanswered            people who replied and got nothing back
+  python3 -m commentdm handled @username     you sent their link by hand: clear them from unanswered
   python3 -m commentdm refresh-token         extend the token (lasts 60 days; run weekly from launchd)
   python3 -m commentdm webhook [--port N]    receive events the moment they happen (needs a public HTTPS address)
 """
@@ -176,6 +178,15 @@ def main() -> None:
         for dry in (False, True):
             if (STATE / ("dry-run.sqlite" if dry else "live.sqlite")).exists():
                 print(f"{'dry run' if dry else 'live'}: removed {store_for(dry).forget(args[1])} records about {args[1]}")
+    elif cmd == "unanswered":
+        rows = store_for(False).unanswered()
+        for r in rows:
+            print(f"@{r['username'] or r['igsid']} · {r['campaign']} · {r['stage']} · replied {time.strftime('%Y-%m-%d %H:%M', time.localtime(r['last_inbound_at']))}")
+        print(f"{len(rows)} unanswered" if rows else "nobody is waiting on an answer")
+    elif cmd == "handled":
+        if len(args) < 2:
+            raise SystemExit("usage: handled @username")
+        print(f"cleared {store_for(False).mark_handled(args[1])} unanswered campaigns for {args[1]}")
     elif cmd == "refresh-token":
         print(Graph().refresh_token())
     elif cmd == "webhook":

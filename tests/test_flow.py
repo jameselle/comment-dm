@@ -275,6 +275,36 @@ class DmFlow(Base):
         s.upsert_contact("201", "day-2", stage="awaiting_reply", prompts=0)
         self.assertEqual({r["campaign"] for r in s.contacts("201")}, {"day-1", "day-2"})
 
+    def test_a_reply_that_gets_nothing_back_is_counted_as_unanswered_until_handled_by_hand(self):
+        self.make()
+        self.g.follows["201"] = True
+        self.g.comment(self.post, "201", "sam", "CLIP")
+        self.e.poll_once()
+        self.e.poll_once()   # the comment Instagram copies into the thread isn't a reply, so not a miss
+        self.assertEqual(self.e.s.unanswered(), [])
+        self.g.subscribed = []   # Instagram refuses the DM after their reply
+        self.g.now += 30
+        self.g.dm("201", "sam", "Send me the tools!")
+        self.e.poll_once()
+        missed = self.e.s.unanswered()
+        self.assertEqual([(r["username"], r["campaign"]) for r in missed], [("sam", self.camp["name"])])
+        self.assertEqual(self.e.s.stats()["replies left unanswered"], 1)
+        self.assertEqual(self.e.s.mark_handled("@Sam"), 1)
+        self.assertEqual(self.e.s.unanswered(), [])
+        self.assertEqual(self.e.s.contact("201", self.camp["name"])["stage"], "delivered")
+
+    def test_answered_replies_are_never_counted_as_unanswered(self):
+        self.start(follows=False)   # asked to follow
+        self.assertEqual(self.e.s.unanswered(), [])
+        self.g.follows["201"] = True
+        self.g.now += 30
+        self.g.dm("201", "sam", "I followed ✅")
+        self.e.poll_once()           # delivered
+        self.g.now += 30
+        self.g.dm("201", "sam", "thanks!")
+        self.e.poll_once()
+        self.assertEqual(self.e.s.unanswered(), [])
+
     def test_the_comment_copied_into_the_dm_thread_is_not_treated_as_their_reply(self):
         self.make()
         self.g.follows["201"] = True

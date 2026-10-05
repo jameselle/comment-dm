@@ -185,6 +185,8 @@ class Engine:
             return "too old to answer"  # Instagram only allows replies within 24 hours of their message
         igsid = m["from_id"]
         rows = self.s.contacts(igsid)
+        if rows:
+            self.s.touch_inbound(igsid, m.get("at") or self.now())  # first, so a reply nothing answers shows as unanswered
         # Instagram copies the comment into the new DM thread, dated when it was commented (before our DM). It isn't
         # a reply: a campaign still awaiting one only counts messages that came after we asked.
         waiting = [r for r in rows if r["stage"] == "gated" or r["stage"] == "awaiting_reply" and m.get("at", 0) > (r["updated_at"] or 0)]
@@ -203,7 +205,7 @@ class Engine:
         pairs = [(r, by_name[r["campaign"]]) for r in waiting if r["campaign"] in by_name]
         if not pairs:
             return "campaign removed"
-        self.s.touch_inbound(igsid, m.get("at") or self.now())
+        self.s.touch_inbound(igsid, m.get("at") or self.now())  # a keyword DM's new row too
         if not self.under_cap():
             self.log("hourly cap reached: will answer when the next message arrives")
             return "capped"
