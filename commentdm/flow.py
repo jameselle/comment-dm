@@ -194,7 +194,10 @@ class Engine:
         # a reply: a campaign still awaiting one only counts messages that came after we asked.
         waiting = [r for r in rows if r["stage"] == "gated" or r["stage"] == "awaiting_reply" and m.get("at", 0) > (r["updated_at"] or 0)]
         camp = self.campaign_for(m.get("text"))
-        if camp and self.allowed(m.get("username")) and not any(r["campaign"] == camp["name"] for r in rows):
+        # That same copy carries their keyword, and it's dated before we answered them. Read as a keyword DM it would
+        # start the FIRST campaign with that keyword, so a keyword shared by two posts sent both posts' links.
+        echo = bool(rows) and m.get("at", 0) <= max((r["updated_at"] or 0) for r in rows)
+        if camp and not echo and self.allowed(m.get("username")) and not any(r["campaign"] == camp["name"] for r in rows):
             # The keyword sent as a DM (no comment): it starts that campaign, whatever else they're in.
             self.s.upsert_contact(igsid, camp["name"], username=m.get("username"), stage="awaiting_reply", prompts=0)
             waiting.append(self.s.contact(igsid, camp["name"]))

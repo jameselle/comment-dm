@@ -319,6 +319,35 @@ class DmFlow(Base):
         self.e.poll_once()
         self.assertEqual(self.g.outbox("201")[-1]["message"], self.camp["deliver"])
 
+    def test_a_keyword_shared_by_two_posts_sends_only_the_commented_posts_links(self):
+        self.make()
+        older = dict(copy.deepcopy(self.camp), name="older", media=[self.g.post()], deliver="the older post's link")
+        newer = dict(copy.deepcopy(self.camp), name="newer", media=[self.post], deliver="this post's link")
+        self.e.campaigns[:] = [older, newer]   # the older one is first, so a keyword DM alone would pick it
+        self.g.follows["201"] = True
+        self.g.comment(self.post, "201", "sam", "CLIP")
+        self.e.poll_once()                     # private reply; Instagram copies the comment into the thread
+        self.e.poll_once()
+        self.g.now += 30
+        self.g.dm("201", "sam", self.camp["private_reply_button"])
+        self.e.poll_once()
+        sent = [m["message"] for m in self.g.outbox("201")]
+        self.assertIn("this post's link", sent)
+        self.assertNotIn("the older post's link", sent)
+        self.assertEqual([r["campaign"] for r in self.e.s.contacts("201")], ["newer"])
+
+    def test_a_later_keyword_dm_still_starts_another_campaign(self):
+        self.make()
+        other = dict(copy.deepcopy(self.camp), name="other", keyword="AUTO", media="all", deliver="the other link")
+        self.e.campaigns.append(other)
+        self.g.follows["201"] = True
+        self.g.comment(self.post, "201", "sam", "CLIP")
+        self.e.poll_once()
+        self.g.now += 30
+        self.g.dm("201", "sam", "auto")
+        self.e.poll_once()
+        self.assertIn("the other link", [m["message"] for m in self.g.outbox("201")])
+
     def test_dming_the_keyword_directly_starts_the_flow_too(self):
         self.make()
         self.g.follows["301"] = True
